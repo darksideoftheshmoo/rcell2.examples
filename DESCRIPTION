@@ -26,5 +26,8 @@ Depends:
 biocViews:
 Imports:
     stats
-Suggests: 
+Suggests:
+    rcell2,
+    rcell2.cellid,
+    rcell2.magick,
     tidyverse
