@@ -23,16 +23,42 @@ urlcolor: blue
 
 ```{r setup}
 library(rcell2)
+library(rcell2.cellid)
 library(utiles)
 library(tidyverse)
 library(magick)
 ```
 
+## Segmentation
+
+```{r}
+data.dir <- "../../../data/image_samples_time_series/"
+
+parameters.list <- rcell2.cellid::parameters_default(
+  background_reject_factor = 1.3,
+  max_split_over_minor = 0.6,
+  max_dist_over_waist = 6,
+  max_pixels_per_cell = 3500
+)
+
+cell.args <- arguments(data.dir, parameters = parameters_write(parameters.list))
+
+cell.out <- cell.args %>% 
+  # filter(ch == "TFP", t.frame %in% c(1,10,20,40)) %>% 
+  cell2(output_coords_to_tsv = T)
+```
+
 ## Load cell data
 
 ```{r}
-cell.data <- readRDS(here::here("testings/curvature_tests/cell.data_20201213_60834cca08e2.RDS"))
-cell.boundaries <- readRDS(here::here("testings/curvature_tests/cell.boundaries_20201214_6083158baea5.RDS"))
+cell.data <- cell.load.alt(data.dir)
+cell.boundaries <- cell.load.boundaries(data.source = "masks.tsv", arguments = cell.args)
+
+summary(cell.data)
+str(cell.boundaries)
+
+cdata <- cell.data$data
+images <- cell.data$images
 ```
 
 ## Spline fit to boundary points
