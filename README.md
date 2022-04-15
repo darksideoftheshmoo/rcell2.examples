@@ -2,9 +2,7 @@
 
 Examples for [rcell2](https://github.com/darksideoftheshmoo/rcell2) and companion packages.
 
-!['Automating' comes from the roots 'auto-' meaning 'self-', and 'mating', meaning 'screwing'.](https://imgs.xkcd.com/comics/automation.png)
-
-Functions to analyze Cell-ID single-cell cytometry data in a tidy and shiny framework.
+The `rcell2` packages provide functions to analyze Cell-ID single-cell cytometry data in a tidy and shiny framework.
 
 # Installation
 
@@ -13,6 +11,20 @@ This package has no dependencies for installation.
 However, all notebooks use the rcell2 packages, and many other packages are required to run all the example notebooks.
 
 So, it is left to the user to install them as needed.
+
+# Development notebooks
+
+Example data and analysis notebooks can be found in the examples package: [`rcell2.examples`](https://github.com/darksideoftheshmoo/rcell2.examples/tree/main).
+
+The `inst/testings` directory holds many rmarkdown notebooks, where we explore different analysis approaches to single cell images and cytometry:
+
+* Spatial distribution of fluorescent signals.
+* Pattern detection in time-series.
+* Classification examples.
+* Cell boundary curvature analysis and alignment.
+* ...
+
+!['Automating' comes from the roots 'auto-' meaning 'self-', and 'mating', meaning 'screwing'.](https://imgs.xkcd.com/comics/automation.png)
 
 # Todo
 
