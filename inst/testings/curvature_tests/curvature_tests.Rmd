@@ -24,6 +24,7 @@ urlcolor: blue
 ```{r setup}
 library(rcell2)
 library(rcell2.cellid)
+library(rcell2.examples)
 library(utiles)
 library(tidyverse)
 library(magick)
@@ -68,41 +69,7 @@ Nota: el spline fit devuelve una cantidad de puntos diferente para cada borde.
 Esto es importante porque si la densidad/cantidad de puntos fuera mayor, por
 ejemplo, entonces los angulos valdrian menos, achatando todo.
 
-```{r}
-# whuber's spline.poly as shared in StackExchange
-# https://gis.stackexchange.com/a/24929
-spline.poly <- function(xy, k=3, dof=5, ...) {
-  # Assert: xy is an n by 2 matrix with n >= k.
-  
-  # Wrap k vertices around each end.
-  n <- dim(xy)[1]
-  if (k >= 1) {
-    data <- rbind(xy[(n-k+1):n,], xy, xy[1:k, ])
-  } else {
-    data <- xy
-  }
-  
-  # Spline the x and y coordinates.
-  data.spline <- stats::smooth.spline(x=1:(n+2*k),
-                                      y=data[,1,drop=T], 
-                                      df=dof)
-  x <- data.spline$x
-  x1 <- data.spline$y
-  x2 <- stats::smooth.spline(
-      x=1:(n+2*k), 
-      y=data[,2,drop=T],
-      df=dof
-    )$y
-  
-  # Retain only the middle part.
-  result <- cbind(x = x1, y = x2)[k < x & x <= n+k, ]
-  
-  result <- as.data.frame(result)
-  
-  result
-}
-```
-
+Requerimos la función `smooth.spline.poly`.
 
 ### Compute angle differences
 
@@ -110,17 +77,24 @@ spline.poly <- function(xy, k=3, dof=5, ...) {
 * `p2p.ratio`: The fraction of the expected perimeter that corresponds to the perimeter "in excess" respect to a round disk.
 
 ```{r}
+# Prepare unique boundary identifiers
+cell.boundaries$id.cell <- with(cell.boundaries, 
+                                paste(sep = ".",
+                                      pos, cellID, t.frame)) %>% factor()
+# Split the table by that id
 cell.boundaries.list <- split(cell.boundaries, cell.boundaries$id.cell)
 ```
+
+Compute splined boundaries
 
 ```{r}
 cell.perims.list <- 
   lapply(cell.boundaries.list, function(cell.boundary){
     xy <- cell.boundary[,c("x", "y")]
   
-    xy.spline9 <- spline.poly(xy = xy, k = 9, dof = 9)
-    xy.spline27 <- spline.poly(xy = xy, k = 9, dof = 27)
-    xy.spline_nr <- spline.poly(xy = xy, k = 9, dof = nrow(xy)/3)
+    # xy.spline9 <- smooth.spline.poly(xy = xy, k = 9, dof = 9)
+    # xy.spline27 <- smooth.spline.poly(xy = xy, k = 9, dof = 27)
+    xy.spline_nr <- smooth.spline.poly(xy = xy, k = 9, dof = nrow(xy)/3)
     
     # xy.spline9.poly <- sp::Polygon(xy.spline9, hole = FALSE)
     xy.spline.poly <- sp::Polygon(xy.spline_nr, hole = FALSE)
@@ -155,6 +129,10 @@ cell.perims.list <-
   })
 ```
 
+Bind results:
+
+* Table with point-to-ponit summary values.
+* Table with smooth boundary points.
 
 ```{r}
 cell.perims <- 
@@ -176,7 +154,8 @@ cell.perims.smooth <-
 
 ```{r}
 ggplot(cell.perims) +
-  geom_point(aes(x=p2p.diff, y=p2p.ratio))
+  geom_point(aes(x=p2p.diff, y=p2p.ratio)) +
+  ggtitle("Summary values", "Difference and ratio of smooth boundary length v.s. expected length for a cirular boundary.")
 ```
 
 #### Join to cell.data
@@ -186,13 +165,6 @@ cell.data$data2 <-
   left_join(cell.data$data, 
             cell.perims, 
             by = c("cellID", "t.frame", "pos"))
-```
-
-```{r, eval=F}
-pdata <- read.csv(here::here("testings/curvature_tests/pdata.csv"))
-
-# rcell2::shinyCell(cdata = left_join(cell.data$data2, pdata), 
-#                   pdata = pdata, paths = cell.data$images)
 ```
   
 ## Compute angles
@@ -280,18 +252,29 @@ cell.angles.sd <-
 ## Save calculations
 
 ```{r}
-# cell.boundaries.list %>% saveRDS("testings/curvature_tests/calculations/cell.boundaries.list.RDS")
-# cell.perims.list %>% saveRDS("testings/curvature_tests/calculations/cell.perims.list.RDS")
-# cell.perims %>% saveRDS("testings/curvature_tests/calculations/cell.perims.RDS")
-# cell.perims.smooth %>% saveRDS("testings/curvature_tests/calculations/cell.perims.smooth.RDS")
-# cell.perim.angles %>% saveRDS("testings/curvature_tests/calculations/cell.perim.angles.RDS")
-# cell.angles.sd %>% saveRDS("testings/curvature_tests/calculations/cell.angles.sd.RDS")
-```
+dir.create("sample_data")
 
+cell.boundaries.list %>% saveRDS(
+  "sample_data/cell.boundaries.list.RDS")
+cell.boundaries %>% saveRDS(
+  "sample_data/cell.boundaries.RDS")
+cell.perims.list %>% saveRDS(
+  "sample_data/cell.perims.list.RDS")
+cell.perims %>% saveRDS(
+  "sample_data/cell.perims.RDS")
+cell.perims.smooth %>% saveRDS(
+  "sample_data/cell.perims.smooth.RDS")
+cell.perim.angles %>% saveRDS(
+  "sample_data/cell.perim.angles.RDS")
+cell.angles.sd %>% saveRDS(
+  "sample_data/cell.angles.sd.RDS")
+```
 
 ## Finding patterns in angles
 
 ### Podria usar autocorrelacion
+
+Sample a couple cells:
 
 ```{r}
 xy.spline_nr.angles2 <- cell.perim.angles %>% sample(1) %>% bind_rows(.id = "id.cell") %>% 
@@ -301,16 +284,30 @@ xy.spline_nr.angles5 <- cell.perim.angles %>% sample(1) %>% bind_rows(.id = "id.
 
 id2 <- xy.spline_nr.angles2$id.cell[1]
 id5 <- xy.spline_nr.angles5$id.cell[1]
+```
 
-cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>% 
-  ggplot(aes(x=x,y=y, color=type, group=type)) + 
+Inspect:
+
+```{r}
+id2
+id5
+
+cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>%
+  # group_by(id.cell) %>% 
+  # mutate(x=x-mean(x), y=y-mean(y)) %>% 
+  # ggplot(aes(x=x-mean(x),y=y-mean(y), color=type, group=id.cell)) + 
+  ggplot(aes(x=x,y=y, color=type, group=id.cell)) + 
   geom_path() + 
-  facet_wrap(~id.cell, scales = "free") + 
+  facet_wrap(~id.cell, scales="free") + 
+  theme_minimal() +
+  # coord_equal() +
   theme(aspect.ratio = 1)
 ```
 
+Save sample and re-plot:
+
 ```{r}
-ids <- c("2_43_0", "2_47_0")
+ids <- c("2.258.13", "2.38.20")
 
 xy.spline_nr.angles2 <- cell.perim.angles[ids[1]] %>% 
   bind_rows(.id = "id.cell") %>% 
@@ -335,8 +332,9 @@ cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>%
 y2 <- xy.spline_nr.angles2$giro3
 y5 <- xy.spline_nr.angles5$giro3
 
-plot(y2, type="l", col = "black")
+plot(y2, type="l", col = "black", ylim = c(-50, 50))
 lines(y5, type="l", col = "red")
+abline(h=0, lty=2)
 ```
 
 Consigo misma:
@@ -366,14 +364,14 @@ https://stats.stackexchange.com/questions/133404/finding-occurrences-of-specific
 
 #### Preparar datos
 
-Para usar DTW, primero hay que interpolar las curvas que son mas cortas.
+Para usar DTW, primero hay que interpolar las curvas que son mas "cortas".
 
-Un "problema" de esto es que la suma de los angulos ya no va a dar 360.
+Un problema de esto es que la suma de los angulos ya no va a dar 360.
 
 ```{r}
-max(length(y2), length(y5))
+max.len <- max(length(y2), length(y5))
 
-y2.ip <- approx(y2, n = 92)$y
+y2.ip <- approx(y2, n = max.len)$y
 
 y5 <- recenter.vector(y5, 50)
 # plot(x = scale(1:length(y5)),
@@ -386,7 +384,7 @@ lines(x = 1:length(y2.ip),
       y = y2.ip, col = "blue")
 ```
 
-Bueno, no parece estar tan mal, aunque lo de los ángulos es cierto:
+Bueno, no parece estar tan mal, aunque lo de los ángulos es cierto, no da 360:
 
 ```{r}
 sum(y2)
