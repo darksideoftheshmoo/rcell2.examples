@@ -24,7 +24,7 @@ urlcolor: blue
 ```{r setup}
 library(rcell2)
 library(rcell2.cellid)
-library(rcell2.examples)
+# library(rcell2.examples)
 library(utiles)
 library(tidyverse)
 library(magick)
@@ -43,17 +43,20 @@ parameters.list <- rcell2.cellid::parameters_default(
 )
 
 cell.args <- arguments(data.dir, parameters = parameters_write(parameters.list))
+```
 
-cell.out <- cell.args %>% 
-  # filter(ch == "TFP", t.frame %in% c(1,10,20,40)) %>% 
-  cell2(output_coords_to_tsv = T)
+
+```{r}
+# cell.out <- cell.args %>%
+#   # filter(ch == "TFP", t.frame %in% c(1,10,20,40)) %>%
+#   cell2(output_coords_to_tsv = T)
 ```
 
 ## Load cell data
 
 ```{r}
 cell.data <- cell.load.alt(data.dir)
-cell.boundaries <- cell.load.boundaries(data.source = "masks.tsv", arguments = cell.args)
+cell.boundaries <- cell.load.boundaries(data.source = "masks.tsv", arguments = cell.args, flags = 0)
 
 summary(cell.data)
 str(cell.boundaries)
@@ -83,6 +86,25 @@ cell.boundaries$id.cell <- with(cell.boundaries,
                                       pos, cellID, t.frame)) %>% factor()
 # Split the table by that id
 cell.boundaries.list <- split(cell.boundaries, cell.boundaries$id.cell)
+```
+
+Check boundaries:
+
+```{r}
+boundary.one <- sample(cell.boundaries.list, 1)[[1]]
+id.one <- boundary.one$id.cell[1] %>% as.character.factor()
+
+boundary.one %>% 
+  mutate(.n = 1:n()) %>% 
+  ggplot() + geom_path(aes(x=x, y=y, color=.n, linetype=as.factor(flag))) + coord_equal()
+```
+
+Check if there are overlapping traces (note that x-y pairs are distorted to this end):
+
+```{r}
+boundary.one %>% 
+  mutate(.n = 1:n()) %>% 
+  ggplot() + geom_path(aes(x=x+.n/100, y=y+.n/100, color=.n, linetype=as.factor(flag))) + coord_equal()
 ```
 
 Compute splined boundaries
@@ -252,12 +274,13 @@ cell.angles.sd <-
 ## Save calculations
 
 ```{r}
-dir.create("sample_data")
-
-cell.boundaries.list %>% saveRDS(
-  "sample_data/cell.boundaries.list.RDS")
+dir.create("sample_data", showWarnings = F)
+cell.data %>% saveRDS(
+  "sample_data/cell.data.RDS")
 cell.boundaries %>% saveRDS(
   "sample_data/cell.boundaries.RDS")
+cell.boundaries.list %>% saveRDS(
+  "sample_data/cell.boundaries.list.RDS")
 cell.perims.list %>% saveRDS(
   "sample_data/cell.perims.list.RDS")
 cell.perims %>% saveRDS(

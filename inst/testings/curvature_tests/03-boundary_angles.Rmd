@@ -1,0 +1,2119 @@
+---
+title: "Far1 arresto-lavado Nico: Calcular angulos"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float:
+      collapsed: false
+    toc_depth: 4
+    number_sections: false
+    smooth_scroll: false
+    code_folding: hide
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 4
+    number_sections: true
+editor_options:
+  chunk_output_type: inline
+author: NM
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+urlcolor: blue
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "output/renders") })
+---
+
+## Setup
+
+```{r setup, message=F}
+knitr::opts_chunk$set(message = F)
+library(tidyverse)
+library(utiles)
+library(foreach)
+library(rcell2)
+library(rcell2.magick)
+```
+
+## Notas
+
+Copiado de:
+
+    ~/Projects/Colman/gitlabs_acl/rtcc/far1/20210826-pruebaexpSkotheim1-lavemaso/03-boundary_angles.Rmd
+
+## Load data
+
+```{r}
+cell.data <- readRDS(
+  "sample_data/cell.data.RDS")
+cell.boundaries <- readRDS(
+  "sample_data/cell.boundaries.RDS")
+```
+
+Compute boundary angles:
+
+## Boundary angles
+
+### Spline fit to boundary points
+
+Nota: el spline fit devuelve una cantidad de puntos diferente para cada borde.
+
+Esto es importante porque si la densidad/cantidad de puntos fuera mayor, por
+ejemplo, entonces los angulos valdrian menos, achatando todo.
+
+
+```{r}
+cell.boundaries.list <- split(cell.boundaries, cell.boundaries$id.cell)
+```
+
+#### Sample one cell for preview
+
+```{r}
+boundary.one <- sample(cell.boundaries.list, 1)[[1]]
+id.one <- boundary.one$id.cell[1] %>% as.character.factor()
+
+ggplot(boundary.one, aes(x,y)) + 
+  geom_point() + geom_path() + coord_equal() +
+  ggtitle(id.one)
+```
+
+#### Smooth boundaries
+
+Smooth them to constant length, up to the 99th percentile of perimeter lengths in the dataset.
+
+Should help with DTW clustering, or others, requiring same-length series.
+
+##### NOT USED: Choose constant length
+
+```{r}
+longest.boundary <- cell.boundaries %>% group_by(pos, cellID, t.frame) %>% 
+  summarise(l = n()) %>% arrange(-l) %>% with(l) %>% 
+  # boot::boot(function(x,y) quantile(x, 0.99), R=300)
+  quantile(0.99) %>% ceiling() %>% unname()
+
+longest.boundary
+
+boundary.len.90th <- cell.boundaries %>% group_by(pos, cellID, t.frame) %>% 
+  summarise(l = n()) %>% arrange(-l) %>% with(l) %>% 
+  # boot::boot(function(x,y) quantile(x, 0.99), R=300)
+  quantile(0.90) %>% ceiling() %>% unname()
+
+boundary.len.90th
+```
+
+```{r}
+# id.cell.test <- c("2-772-14", "2-772-15")
+```
+
+##### Compute splines with variable length
+
+```{r}
+# Setup cluster
+no_cores <- parallel::detectCores() - 1
+cl <- parallel::makeCluster(no_cores, outfile = "/tmp/dopar.txt", setup_strategy = "sequential")
+doSNOW::registerDoSNOW(cl)
+
+# Chunked parallelization
+n_chunks <- 21
+cell.boundaries.list.chunked <- split(cell.boundaries.list,
+                                      rep_len(1:n_chunks, length.out = length(cell.boundaries.list)))
+# cell.boundaries.list.chunked <- split(cell.boundaries.list[id.cell.test],
+#                                       rep_len(1:n_chunks, length.out = length(cell.boundaries.list[id.cell.test])))
+
+# Progress bar stuff
+iterations <- n_chunks
+pb <- txtProgressBar(max = iterations, style = 3)
+progress <- function(n) setTxtProgressBar(pb, n)
+opts <- list(progress = progress)
+
+
+cell.perims.smooth.list <- foreach(cell.boundary.chunk = cell.boundaries.list.chunked,
+                                   .options.snow = opts,
+                                   .combine = c
+                                   # .packages = c("rcell2", "sp")
+                                   ) %dopar% {
+                                    
+    lapply(cell.boundary.chunk, function(cell.boundary){
+      # cell.boundary = cell.boundaries.list[[id.one]]  # TEST
+      xy <- cell.boundary[,c("x", "y")]
+  
+      xy.spline_nr <- rcell2::smooth.spline.poly(xy = xy, 
+                                                 length.out = boundary.len.90th,
+                                                 k = 9, dof = nrow(xy)/3)
+  
+      xy.spline.poly <- sp::Polygon(xy.spline_nr, hole = FALSE)
+  
+      xy.spline.poly.df = data.frame(x = xy.spline.poly@coords[,1],
+                                     y = xy.spline.poly@coords[,2],
+                                     ringDir=xy.spline.poly@ringDir
+                                     )[-1,]
+  
+      return(xy.spline.poly.df)
+    })
+}
+
+close(pb)
+parallel::stopCluster(cl)
+```
+
+##### Review result
+
+```{r}
+p <- ggplot() +
+  geom_point(aes(x=x, y=y), data = cell.boundaries.list[[id.one]]) +
+  geom_path(aes(x=x, y=y), data = cell.perims.smooth.list[[id.one]]) +
+  coord_equal()
+
+p + ggtitle(paste(
+  "Points after smoothing:",
+  cell.perims.smooth.list[[id.one]] %>% nrow(),
+  "Points before smoothing:",
+  cell.boundaries.list[[id.one]] %>% nrow(),
+  "\nTotal number of boundaries processed:",
+  cell.perims.smooth.list %>% length()
+))
+
+unique(sapply(cell.perims.smooth.list, nrow))
+```
+##### Check ring direction
+
+```{r}
+ring.dirs <- sapply(cell.perims.smooth.list, function(d) d$ringDir[1]) %>% unique()
+
+stopifnot(ring.dirs == 1 & length(ring.dirs) == 1)
+```
+
+```{r}
+cell.boundaries.list[[id.one]] %>% nrow()
+cell.perims.smooth.list[[id.one]] %>% nrow()
+```
+
+A small (one segment) gap is expected in the next "path" plot.
+
+Point density along the path splined with `rcell2::smooth.spline.poly` should (and must) be constant (no "density" gaps).
+
+```{r}
+bind_rows(.id="curve",
+  smoothed = cell.perims.smooth.list[[id.one]] %>% 
+    mutate(.n = 1:n()),
+  original = cell.boundaries.list[[id.one]] %>% 
+    mutate(.n = 1:n())
+  ) %>% 
+  ggplot(aes(x=x, y=y, color=curve, 
+             # linetype=as.factor(curve),
+             group=as.factor(curve))) + 
+  geom_path() + geom_point(size=.2) +
+  theme_minimal()
+```
+
+```{r}
+# cell.perims.smooth <- 
+#   cell.perims.smooth.list %>% 
+#   bind_rows(.id = "id.cell") %>% 
+#   separate(id.cell, into = c("pos", "cellID", "t.frame"), convert = T)
+
+# cell.perims.smooth <- 
+#   cell.perims.smooth.list %>%
+#   data.table::rbindlist(idcol = "id.cell")
+# 
+# sapply(cell.perims.smooth[1:100,], function(d) strsplit(d["id.cell"], split = "_", fixed = T))
+# sapply(cell.perims.smooth$id.cell, 
+#        function(id) as.integer(strsplit(id, split = "-", fixed = T)[[1]]) ) %>%
+#   t() #%>% `colnames<-`(c("pos", "cellID", "t.frame"))
+# 
+# cell.perims.smooth[1:100,]
+
+# saveRDS(cell.perims.smooth, "data/cell.perims.smooth.RDS")
+```
+
+##### Save result
+
+```{r}
+# saveRDS(cell.perims.smooth.list, "data/cell.perims.smooth.list.RDS")
+saveRDS(cell.perims.smooth.list, "sample_data/cell.perims.smooth.list.variable_length.RDS")
+```
+
+### Compute angles
+
+Uso el ángulo (con signo) basado en tangentes, con imagen en $[-\pi,\pi]$.
+
+```{r}
+# Setup cluster
+no_cores <- parallel::detectCores() - 1
+cl <- parallel::makeCluster(no_cores, outfile = "/tmp/dopar.txt", setup_strategy = "sequential")
+doSNOW::registerDoSNOW(cl)
+
+# Define some arbitrary number of chunks to make
+n_chunks <- min(no_cores*4, 
+                length(cell.perims.smooth.list))
+cell.perims.smooth.list.chunked <- split(cell.perims.smooth.list,
+                                         rep_len(1:n_chunks, length.out = length(cell.perims.smooth.list)))
+
+# Progress bar stuff
+# iterations <- length(unique(names(cell.perims.smooth.list)))
+iterations <- n_chunks
+pb <- txtProgressBar(max = iterations, style = 3)
+progress <- function(n) setTxtProgressBar(pb, n)
+opts <- list(progress = progress)
+
+# cell.perim.angles.list <- foreach(xy.spline_nr = cell.perims.smooth.list,
+cell.perim.angles.list <- foreach(perim.list = cell.perims.smooth.list.chunked,
+                                  .options.snow = opts, 
+                                  .combine = c,
+                                  # .final = function(x) setNames(x, names(cell.perims.smooth.list)),
+                                  # .packages = c("rcell2", "dplyr", "utiles")
+                                  .packages = "dplyr"
+                                  ) %dopar% {
+                                    
+    lapply(perim.list, function(xy.spline_nr){
+      # xy.spline_nr <- cell.perims.smooth.list[[id.one]]  # TEST
+      xy.spline_nr.angles <- 
+        # Para el ángulo entre puntos necesito agregar el ultimo al principio
+        # Asi "cierro" el path/boundary para las cuentas
+        bind_rows(xy.spline_nr[c(nrow(xy.spline_nr)-1,
+                                 nrow(xy.spline_nr)),], 
+                  xy.spline_nr) %>% 
+        mutate(id = 1:n() - 2) %>% 
+        # Calculo las componentes del vector de desplazamiento
+        mutate(delta.x = x-lag(x),
+               delta.y = y-lag(y)) %>% 
+        # Agrego una columna con vector de direccion de referencia horizontal
+        mutate(delta.x.prev = 1,
+               delta.y.prev = 0) %>%
+        # Calculo el angulo
+        group_by(id) %>% 
+        mutate(giro = utiles::vector.angle(v2=c(delta.x, delta.y),
+                                           v1=c(delta.x.prev, delta.y.prev))) %>% 
+        # Clean up
+        ungroup() %>% 
+        select(-delta.x, -delta.y, -delta.x.prev, -delta.y.prev) %>% 
+        # Calcular delta giro
+        mutate(giro2 = c(NA, diff(giro))) %>% 
+        # Saco los puntos que habia agregado al principio para cerrar el path
+        filter(id > 0) %>% 
+        # Arreglo angulos de magnitud mayor a 180º
+        mutate(
+          giro3 = case_when(
+            abs(giro2) <= 180 ~ giro2,
+            # los angulos mayores a 180 se reducen al angulo de 
+            # magnitud mas pequeña respecto a la horizontal
+            (giro2 < 0) & (abs(giro2) > 180) ~ (360 + giro2),
+            (giro2 > 0) & (abs(giro2) > 180) ~ -(360 - giro2),
+            TRUE ~ NA_real_
+        )) %>% 
+        # Agrego un "lead" para que cada punto corresponda con el angulo
+        # entre los dos vectores que tocan punto
+        # mutate(giro2 = lead(giro2)) %>% 
+        mutate(giro3 = utiles::recenter.vector(v = giro3, i = 2))
+      
+      return(xy.spline_nr.angles)
+      })
+
+}
+
+close(pb)
+parallel::stopCluster(cl)
+```
+
+#### Review result
+
+```{r}
+p <- ggplot() + 
+  geom_path(aes(x=x, y=y), data = cell.boundaries.list[[id.one]]) +
+  # geom_path(aes(x=x, y=y), data = cell.perims.smooth.list$`1-0-0`) +
+  geom_point(aes(x,y,color=giro3), data = cell.perim.angles.list[[id.one]]) +
+  coord_equal()
+plotly::ggplotly(p)
+```
+
+```{r}
+cell.perim.angles.list[[id.one]] %>% arrange(x,y)
+```
+
+
+```{r}
+cell.perim.angles.list[[id.one]]$giro3 %>% sum()
+```
+
+```{r}
+test.id <- "2.114.3"
+  
+cell.perim.angles.list[[test.id]] %>% 
+  ggplot(aes(x=x, y=y, color=giro3)) + 
+  geom_path(color="black", data=cell.boundaries.list[[test.id]])+
+  geom_path(size=2) + 
+  scale_color_viridis_c() + coord_equal()
+
+cell.perim.angles.list[[test.id]] %>% 
+  ggplot(aes(x=id, y=giro3, color=giro3)) + 
+  geom_line(size=2) + 
+  scale_color_viridis_c() + ylim(c(-50,50))
+```
+
+Random ucid:
+
+```{r}
+test.id <- sample(names(cell.boundaries.list), 1)
+
+cell.perim.angles.list[[test.id]] %>% 
+  ggplot(aes(x=x, y=y, color=giro3)) + 
+  geom_path(color="black", data=cell.boundaries.list[[test.id]])+
+  geom_path(size=2) + 
+  scale_color_viridis_c() + coord_equal() +
+  ggtitle(paste("ucid:", test.id))
+
+cell.perim.angles.list[[test.id]] %>% 
+  # mutate(id = recenter.vector(id, 20)) %>%
+  ggplot(aes(x=id, y=giro3, color=giro3)) + 
+  geom_line(size=2) + 
+  scale_color_viridis_c() + ylim(c(-60,60)) +
+  ggtitle(paste("ucid:", test.id))
+```
+
+#### Save result
+
+```{r}
+# cell.perim.angles.list %>% saveRDS("data/cell.perim.angles.list.RDS")
+cell.perim.angles.list %>% saveRDS("sample_data/cell.perim.angles.list.variable_length.RDS")
+
+# cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.RDS")
+# cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.variable_length.RDS")
+```
+
+### NOT USED: Compute (a) fractal dimension
+
+Hay un montón de estimadores.
+
+https://gis.stackexchange.com/a/217563
+
+```{r}
+# # Setup cluster
+# no_cores <- parallel::detectCores() - 1
+# cl <- parallel::makeCluster(no_cores, outfile = "/tmp/dopar.txt", setup_strategy = "sequential")
+# doSNOW::registerDoSNOW(cl)
+# 
+# # Progress bar stuff
+# iterations <- length(unique(names(cell.perims.smooth.list)))
+# pb <- txtProgressBar(max = iterations, style = 3)
+# progress <- function(n) setTxtProgressBar(pb, n)
+# opts <- list(progress = progress)
+# 
+# cell.perims.smooth.fdim <- foreach(cell.perims.smooth = cell.perims.smooth.list,
+#                                   .options.snow = opts, 
+#                                   .final = function(x) setNames(x, names(cell.perims.smooth.list)),
+#                                   .packages = c("fractaldim")
+#                                   ) %dopar% {
+#                                     
+#     fd2d = fractaldim::fd.estim.boxcount(as.matrix(cell.perims.smooth), plot.loglog=F, plot.allpoints=F)
+#     
+#     fd2d['fd']$fd # fractal dimension 
+# }
+# 
+# close(pb)
+# parallel::stopCluster(cl)
+# 
+# cell.perims.smooth.fdim[1:2]
+```
+
+### NOT USED: Compute (auto)correlation
+
+To-do.
+
+```{r}
+# # Setup cluster
+# no_cores <- parallel::detectCores() - 1
+# cl <- parallel::makeCluster(no_cores, outfile = "/tmp/dopar.txt", setup_strategy = "sequential")
+# doSNOW::registerDoSNOW(cl)
+# 
+# # Chunked parallelization
+# n_chunks <- 21
+# cell.perim.angles.list.chunked <- split(cell.perim.angles.list,
+#                                       rep_len(1:n_chunks, length.out = length(cell.perim.angles.list)))
+# 
+# # Progress bar stuff
+# iterations <- n_chunks
+# pb <- txtProgressBar(max = iterations, style = 3)
+# progress <- function(n) setTxtProgressBar(pb, n)
+# opts <- list(progress = progress)
+# 
+# 
+# cell.perims.cor <- foreach(angles.chunk = cell.perim.angles.list.chunked,
+#                           .options.snow = opts,
+#                           ) %dopar% {
+#                             
+#     # angles <- cell.perim.angles.list.chunked[[1]][[1]]
+# 
+#     lapply(angles.chunk, function(angles){
+#       acf.result <- pacf(angles$giro3)
+#       acf.result <- acf(angles$giro3)
+#       acf.result
+#     })
+# }
+# 
+# close(pb)
+# parallel::stopCluster(cl)
+# 
+# cell.perims.smooth.fdim[1:2]
+```
+
+
+## Boundary Analysis
+
+Load results, choose between:
+
+* Smoothed and "Resampled" boundaries (same length in vertices).
+* Smoothed boundaries (variable length).
+
+### Load saved results
+
+```{r}
+# cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.RDS")
+cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.variable_length.RDS")
+
+cell.perim.angles <- cell.perim.angles.list %>% 
+  bind_rows(.id = "id.cell") %>% separate(id.cell, c("pos", "cellID", "t.frame"), convert = T, remove = F) %>% 
+  arrange(pos, cellID, t.frame)
+```
+
+#### Sample one cell for previews
+
+```{r}
+cell.boundaries.t5 <- cell.boundaries %>% 
+  select(pos, cellID, t.frame) %>% unique() %>% 
+  group_by(pos, cellID) %>% filter(n() >= 5)
+
+cell.boundaries.t <- semi_join(cell.boundaries, cell.boundaries.t5)
+
+# cell.boundaries.t5 %>% filter(pos == 2, cellID == 133)
+# cell.boundaries.t %>% filter(pos == 2, cellID == 133)
+```
+
+```{r}
+my.sample <- cell.boundaries.t5[sample(1:nrow(cell.boundaries.t5), 1), c("pos", "cellID")]
+
+cell.angles.one <- cell.perim.angles %>% 
+  semi_join(my.sample)
+
+id.cell.one <- cell.angles.one[1, c("pos", "cellID")] %>% unlist() %>% paste(collapse = ".")
+```
+
+
+```{r}
+cell.angles.one %>% ggplot(aes(x,y,color=giro3)) + geom_path() + facet_wrap(~t.frame, ncol = 10) +
+  coord_equal() + scale_color_viridis_c() +
+  ggtitle("Boundary v.s. time", id.cell.one)
+
+cell.angles.one %>% group_by(pos, cellID, t.frame) %>% 
+  # mutate(angle.norm = (giro3-min(giro3)) / (max(giro3)-min(giro3))  ) %>% 
+  mutate(angle.base = giro3-min(giro3)) %>% 
+  mutate(angle.norm = angle.base/max(angle.base)) %>% 
+  ggplot() +
+  geom_tile(aes(x=id,y=as.factor(t.frame), fill=angle.norm)) +
+  scale_fill_viridis_c() + 
+  ggtitle("Boundary angle series v.s. time", id.cell.one)
+```
+
+```{r}
+cellStrip(cdata = cell.data$data %>% semi_join(my.sample),
+          paths = cell.data$images) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+### Data series alignment tests
+
+```{r}
+t.frame.two <- c(29,30)
+# t.frame.two <- 16:17
+
+series1 <- cell.angles.one %>% filter(t.frame == t.frame.two[1])
+series2 <- cell.angles.one %>% filter(t.frame == t.frame.two[2])
+
+angles1 <- series1$giro3
+angles2 <- series2$giro3
+
+p <- ggplot(mapping=aes(x=x,y=y,color=id,text=giro3)) + 
+  geom_point(data = series1) +
+  geom_point(data = series2) +
+  scale_color_viridis_c()
+plotly::ggplotly(p)
+
+ggplot(mapping=aes(x=x,y=y,color=id)) +
+  geom_point(data = series1) + 
+  # geom_point(data = series2 %>% mutate(id = recenter.vector(id, 93))) +
+  geom_point(data = series2 %>% mutate(id = recenter.vector(id, 125))) +
+  scale_color_viridis_c() + 
+  ggtitle("Boundary index series of a cell pair", id.cell.one)
+
+ggplot(mapping=aes(x=x,y=y,color=giro3)) +
+  geom_point(data = series1) + 
+  geom_point(data = series2 %>% mutate(id = recenter.vector(id, 125))) +
+  scale_color_viridis_c() + 
+  ggtitle("Boundary angle series of a cell pair", id.cell.one)
+```
+
+```{r}
+plot(series1$giro3,type="l")
+lines(series2$giro3,lty=2)
+# lines(series2$giro3 %>% recenter.vector(125),col="red")
+# lines(series2$giro3 %>% recenter.vector(60),col="blue")
+```
+
+#### DTW
+
+* https://cran.r-project.org/web/packages/dtw/vignettes/dtw.pdf
+
+```{r}
+# d <- 
+#   rbind(
+#     angles1=angles1,
+#     angles2=angles2
+#   )
+# 
+# d %>% dim()
+```
+
+```{r}
+# Funcion de distancia DTW
+# distfunc <- function(x) as.dist(TSclust::diss(SERIES = x, METHOD = "DTWARP"))
+# TSclust::diss(SERIES = d, METHOD = "DTWARP")
+```
+
+##### Univariate DTW: angles
+
+Jugar un poco:
+
+```{r}
+dtw::dtw(x=angles2 %>% recenter.vector(135), 
+         y=angles1,
+         
+         # open.begin = T, open.end = T, 
+         # step.pattern = dtw::asymmetricP0
+         
+         keep.internals = T,
+         step.pattern = dtw::asymmetric
+         # 
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 1, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 1, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 5, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 5, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 7, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 7, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::typeIVc
+         ) -> dtw.result
+```
+
+
+```{r}
+plot(dtw.result)
+plot(dtw.result, type="two",off=-20,match.lty=3,match.indices=40)
+dtw::dtwPlotThreeWay(dtw.result)
+```
+
+Este quizas sirva para ver los "lags" locales:
+
+> Quizas tenga que ver con donde crecio la frontera!
+
+```{r}
+plot(dtw.result$index1,dtw.result$index2)
+```
+
+Probar dtw con todos los posibles recentrados:
+
+```{r}
+dtw.results <- 
+  sapply(seq.int(1,length(angles2), by = 1), function(i){
+    dtw.result <- 
+      dtw::dtw(x=angles2 %>% recenter.vector(i), 
+               y=angles1,
+               # open.begin = T, open.end = T, keep.internals = T,
+               # step.pattern = dtw::asymmetricP0
+               
+               # step.pattern = dtw::asymmetric
+               )
+    return(c(i=i, dtw.dist=dtw.result$distance))
+  }) %>%
+  t() %>% as.data.frame()
+
+dtw.lag <- dtw.results$i[which.min(dtw.results$dtw.dist)]
+dtw.lag.d <- dtw.results$dtw.dist[which.min(dtw.results$dtw.dist)]
+
+dtw.lag
+```
+
+Quedarme con el recentrado que genera la minima distancia:
+
+```{r}
+dtw.results %>% ggplot() + 
+  geom_point(aes(i, dtw.dist)) +
+  geom_vline(xintercept = dtw.lag, color="red") +
+  geom_hline(yintercept = dtw.lag.d, color="red")
+```
+
+Graficar: ¿quedo bien?
+
+```{r}
+series2.dtw_centered <- 
+  series2 %>% select(x,y,giro3,pos,t.frame,cellID) %>% 
+  mutate(x = recenter.vector(x, dtw.lag), 
+         y = recenter.vector(y, dtw.lag),
+         giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+  mutate(id = 1:n())
+
+series1.dtw_centered <- 
+  series1 %>% select(x,y,giro3,pos,t.frame,cellID) %>% 
+  mutate(id = 1:n())
+
+ggplot(mapping=aes(x=x,y=y,color=id)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2) +
+  scale_color_viridis_c()
+
+ggplot(mapping=aes(x=x,y=y,color=giro3)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2, size =2) +
+  scale_color_viridis_c() + theme_minimal()
+```
+
+A ver si puedo dibujar flechitas:
+
+```{r}
+dtw.result <- 
+  dtw::dtw(x=series2$giro3 %>% recenter.vector(dtw.lag), 
+           y=series1$giro3,
+           # open.begin = T, open.end = T, 
+           keep.internals = T,
+           step.pattern = dtw::asymmetric
+           )
+
+plot(dtw.result, type="two",off=-50,match.lty=3,match.indices=40)
+# plot(dtw.result)
+plot(dtw.result$index1,dtw.result$index2)
+# length(dtw.result$index1)
+# length(dtw.result$index2)
+```
+
+
+```{r}
+d <- 
+  mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                               series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+         dtw.result$index2, 
+         dtw.result$index1) %>% t %>% as.data.frame %>% 
+  mutate(id = 1:n()) %>% 
+  rename(x1=V1, y1=V2, giro3_1=V3,
+         x2=V4, y2=V5, giro3_2=V6)
+
+
+p <- 
+  ggplot(mapping=aes(x=x,y=y,color=id)) +
+    geom_segment(aes(x=x1,y=y1,
+                     xend=x2,yend=y2,
+                     color=id),
+                 data = d,
+                 size=0.2, 
+                 arrow = arrow(type = "closed", angle = 10, ends = "both",
+                               length = unit(0.1, "in"))) +
+    geom_point(aes(shape=as.factor(t.frame)), color="black", size=1, data = bind_rows(series1.dtw_centered, series2.dtw_centered)) + 
+    # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
+    scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired"), guide = "none") + scale_shape_manual(values = 1:2) +
+    coord_equal() + 
+    theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+Hermoso.
+
+```{r}
+# ggsave(filename = "figs/DTW_angle_alignment.pdf", plot = p)
+# saveRDS(d, file="data/dwt.warped.series_2.772.14_15.RDS")
+```
+
+```{r}
+cellStrip(cdata = cell.data$data %>% semi_join(bind_rows(series1.dtw_centered, series2.dtw_centered), 
+                                               by = c("cellID", "t.frame", "pos")),
+          paths = cell.data$images) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+
+###### Diferencia entre trazas
+
+1. Graficar secuencia de angulos "warpeada" (alineada) por DTW.
+2. Calcular la diferencia.
+
+```{r}
+plot(d$giro3_1, type="l")
+lines(d$giro3_2, col="red")
+# abline(v=28, lty=2)
+# abline(v=50, lty=2)
+
+plot(d$giro3_1-d$giro3_2, col="blue", type="l")
+```
+
+Es bastante ruidoso, a ver si lo suavizo:
+
+```{r}
+dof=25
+```
+
+Smooth por splines:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% .$y
+giro.dtw2 <- d$giro3_2 %>% smooth.spline(df=dof) %>% .$y
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+Smooth por splines (primera derivada):
+
+```{r}
+giro.dtw1.d1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1)) %>% .$y
+giro.dtw2.d1 <- d$giro3_2 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1)) %>% .$y
+
+plot(d$giro3_1, type="l", lty=2)
+lines(giro.dtw1, type="l")
+# lines(x=seq(from=1, to=nrow(d), by=0.1), giro.dtw1.d1, col="blue")
+# abline(h=0)
+
+plot(giro.dtw1.d1-giro.dtw2.d1, col="blue", type="l")
+```
+
+Smooth moving average:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+Smooth gausiano:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+##### Multivariate DTW: XY
+
+Podria hacer lo mismo con los pares de coordenadas xy, a la multivariada?
+
+```{r}
+dtw.results <- 
+  sapply(seq.int(1,length(angles2), by = 1), function(i){
+    
+    dtw.result <- 
+      dtw::dtw(x=series2 %>% select(x,y) %>% 
+                 mutate(x = recenter.vector(x, i), y = recenter.vector(y, i)) %>% 
+                 as.matrix(), 
+               y=series1 %>% select(x,y) %>% as.matrix(),
+               dist.method="Manhattan",
+               open.begin = T, 
+               # open.end = T, keep.internals = T,
+               step.pattern = dtw::asymmetric
+               # step.pattern = dtw::asymmetricP0
+               )
+    return(c(i, dtw.result$distance))
+  }) %>% 
+  t() %>% as.data.frame()
+
+dtw.results %>% ggplot() + 
+  geom_point(aes(V1, V2))
+```
+
+
+```{r}
+dtw.lag <- which.min(dtw.results$V2)
+
+dtw.lag
+```
+
+```{r}
+series2.dtw_centered <- 
+  series2 %>% select(x,y,giro3) %>% 
+  mutate(x = recenter.vector(x, dtw.lag), 
+         y = recenter.vector(y, dtw.lag),
+         giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+  mutate(id = 1:n())
+
+series1.dtw_centered <- 
+  series1 %>% select(x,y,giro3) %>% 
+  mutate(id = 1:n())
+
+ggplot(mapping=aes(x=x,y=y,color=id)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2) +
+  scale_color_viridis_c() + theme_minimal()
+```
+
+```{r}
+dtw.result <- 
+  dtw::dtw(x=series2 %>% select(x,y) %>% 
+             mutate(x = recenter.vector(x, dtw.lag), y = recenter.vector(y, dtw.lag)) %>% 
+             as.matrix(), 
+           y=series1 %>% select(x,y) %>% as.matrix(),
+           dist.method="Manhattan",
+           # open.begin = T, open.end = T, 
+           keep.internals = T,
+           step.pattern = dtw::asymmetric
+           # step.pattern = dtw::asymmetricP0
+           )
+
+d <- 
+  mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                               series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+         dtw.result$index2, 
+         dtw.result$index1) %>% t %>% as.data.frame %>% 
+  mutate(id = 1:n()) %>% 
+  rename(x1=V1, y1=V2, giro3_1=V3,
+         x2=V4, y2=V5, giro3_2=V6)
+
+
+p <- 
+  ggplot(mapping=aes(x=x,y=y,color=id)) +
+    geom_segment(aes(x=x1,y=y1,
+                     xend=x2,yend=y2,
+                     color=id),
+                 data = d,
+                 size=0.2, 
+                 arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in"))) +
+    geom_point(data = series2.dtw_centered, color="black", shape=5) + 
+    geom_point(data = series1.dtw_centered, color="black", shape=2) +
+    # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
+    scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired")) +
+    theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+###### Diferencia entre trazas
+
+1. Graficar secuencia de angulos "warpeada" (alineada) por DTW.
+2. Calcular la diferencia.
+
+```{r}
+plot(d$giro3_1, type="l")
+lines(d$giro3_2, col="red")
+
+plot(d$giro3_1-d$giro3_2, col="blue", type="l")
+```
+
+Es bastante ruidoso.
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% smooth.spline(df=25) %>% .$y
+giro.dtw2 <- d$giro3_2 %>% smooth.spline(df=25) %>% .$y
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+##### Alignment (pair-wise)
+
+Entre t.frames:
+
+```{r}
+id.cell.one <- "2-772"
+
+cell.idxs <- names(cell.perim.angles.list) %>% str_starts(id.cell.one) %>% which()
+```
+
+```{r}
+cell.angles.one <- 
+  cell.perim.angles.list[cell.idxs] %>% 
+  bind_rows(.id = "id.cell") %>% separate(id.cell, c("pos", "cellID", "t.frame"), convert = T, remove = F) %>% 
+  arrange(pos, cellID, t.frame)
+
+series.list <- cell.angles.one %>% split(~t.frame)
+```
+
+```{r}
+my_dtw <- function(i, angles1, angles2, result=F){
+    dtw.result <- 
+      dtw::dtw(x=angles2 %>% recenter.vector(i), 
+               y=angles1,
+               # open.begin = T, open.end = T, keep.internals = T,
+               # step.pattern = dtw::asymmetricP0
+               step.pattern = dtw::asymmetric
+               )
+    
+    if(result) 
+      return(dtw.result) 
+    else 
+      return(c(i, dtw.result$distance))
+  }
+```
+
+
+```{r}
+# i=1
+series.dtw <- list(series.list[[1]])
+warp.mappings <- list()
+warp.mappings2 <- list()
+warp.mappings3 <- list()
+
+for(i in 1:(length(series.list)-1)){
+  print(i)
+  
+  series1 <- series.dtw[[i]]
+  series2 <- series.list[[i+1]]
+  angles1 <- series1$giro3
+  angles2 <- series2$giro3
+  
+  frame1 <- series1$t.frame[1]
+  frame2 <- series2$t.frame[1]
+  id2 <- series2$id.cell[1]
+  pos <- series2$pos[1]
+  cellID <- series2$cellID[1]
+  
+  # scanning DTW ####
+  dtw.results <- seq.int(1,length(angles2), by = 1) %>% 
+    sapply(my_dtw, angles1, angles2) %>% 
+    t() %>% as.data.frame()
+  
+  dtw.lag <- dtw.results$V1[which.min(dtw.results$V2)]
+  
+  dtw.result <- my_dtw(dtw.lag, angles1, angles2, result=T)
+  
+  # centering by dtw.lag ####
+  series2.dtw_centered <- 
+    series2 %>% select(x,y,giro3,id.cell,pos,t.frame,id) %>% 
+    mutate(x = recenter.vector(x, dtw.lag), 
+           y = recenter.vector(y, dtw.lag),
+           id = recenter.vector(id, dtw.lag),
+           giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+    dplyr::rename(id.old = id) %>% 
+    mutate(id = 1:n())
+  
+  # the previous series should not be recentered (it has been!)
+  series1.dtw_centered <-
+    series1 %>% select(x,y,giro3,id.cell,pos,t.frame,id) %>%
+    dplyr::rename(id.old = id) %>% 
+    mutate(id = 1:n())
+  
+  # Use result in next iteration
+  series.dtw[[i+1]] <- series2.dtw_centered
+  
+  # Warp series
+  warp.mapping <- 
+    mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                                 series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+           dtw.result$index2, 
+           dtw.result$index1) %>% t %>% as.data.frame %>% 
+    mutate(id = 1:n(),
+           id.cell=id2,
+           pos=pos,cellID=cellID,
+           t.frame.1=frame1,
+           t.frame.2=frame2) %>% 
+    rename(x1=V1, y1=V2, giro3_1=V3,
+           x2=V4, y2=V5, giro3_2=V6)
+  
+  # Para graficar las flechas (formato 1)
+  warp.mappings[[i]] <- warp.mapping
+  
+  # Para graficar las flechas (formato 2)
+  series1.warped <- series1.dtw_centered[dtw.result$index2,]
+  names(series1.warped) <- paste0(names(series1.warped), ".1")
+  series2.warped <- series2.dtw_centered[dtw.result$index1,]
+  names(series2.warped) <- paste0(names(series2.warped), ".2")
+  warp.mappings2[[i]] <- bind_cols(series1.warped,series2.warped)
+  
+  # Para graficar los puntos
+  warp.mappings3[[i]] <- bind_rows(
+    series1.dtw_centered[dtw.result$index2,],
+    series2.dtw_centered[dtw.result$index1,]
+  )
+}
+
+series.dtw <- bind_rows(series.list)
+warp.mappings <- bind_rows(warp.mappings)
+warp.mappings2 <- bind_rows(warp.mappings2)
+warp.mappings3 <- bind_rows(warp.mappings3, .id="series")
+
+warp.mappings2
+warp.mappings3
+```
+
+###### t.frames vs angulos de frontera
+
+```{r}
+magickCell(cdata = cell.data$data %>% filter(pos == 2, cellID == 772),
+           paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
+  square_tile(nRow = 3, 
+              annot_labels = filter(cell.data$data, pos == 2, cellID == 772)$t.frame) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+```{r}
+p2.data1 <- warp.mappings2 %>% filter(t.frame.2 < 18) %>% 
+  group_by(t.frame.1) %>% mutate(giro3.scaled.1 = scale(giro3.1, center = F, scale = T)) %>% ungroup() %>% 
+  group_by(t.frame.2) %>% mutate(giro3.scaled.2 = scale(giro3.2, center = F, scale = T)) %>% ungroup()
+
+p2.data2 <- warp.mappings3 %>% filter(t.frame < 18) %>%
+  select(id,giro3,t.frame) %>% unique() %>% 
+  group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T))
+  
+
+p2 <- p2.data1 %>% 
+#   series.dtw %>%
+#   group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+#   filter(t.frame < 17) %>%
+  
+  ggplot() +
+  # geom_tile(aes(x=id,y=t.frame, fill=giro3)) +
+  geom_segment(aes(x=id.1,   y=t.frame.1, 
+                   #color = giro3.1,
+                   xend=id.2,yend=t.frame.2),
+               color="gray",
+               # data = warp.mappings2 %>% filter(t.frame.2 < 17),
+               # arrow = arrow(type = "opem", angle = 10,
+               #               length = unit(0.1, "in")),
+               size=0.2
+               ) +
+  
+  # geom_point(aes(x=id,y=t.frame,
+  #                color=giro3.scaled,
+  #                size=abs(giro3)), alpha=.5,
+  #                data = series.dtw %>% 
+  #                  group_by(t.frame) %>% 
+  #                  mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+  #                  filter(t.frame < 17)
+  #              ) +
+  
+  # geom_point(aes(id.1,t.frame.1,
+  #                color=giro3.scaled.1,
+  #                size=abs(giro3.1),
+  #                alpha=.5,
+  #                text=paste("id.1:",id.1)),
+  #            data=p2.data1 %>% select(id.1,t.frame.1,giro3.scaled.1,giro3.1,id.old.1) %>% unique()) +
+  # 
+  # geom_point(aes(id.2, t.frame.2,
+  #                color=giro3.scaled.2,
+  #                size=abs(giro3.2),
+  #                alpha=.5,
+  #                text=paste("id.old.2:",id.old.2)),
+  #            data=p2.data1 %>% select(id.2,t.frame.2,giro3.scaled.2,giro3.2,id.old.2) %>% unique()) +
+
+  geom_point(aes(id, t.frame,
+                 color=giro3.scaled,
+                 size=abs(giro3),
+                 alpha=.5
+                 ),
+             data=p2.data2) +
+  
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) +
+  theme_minimal()
+
+# plotly::ggplotly(p2)
+p2
+```
+
+Para chequear:
+
+```{r}
+# warp.mappings2$t.frame.1 %>% unique() -> t.frames
+# 
+# lapply(t.frames, function(t.frame.one){
+#   
+#   series1 <- filter(warp.mappings2, t.frame.1 == t.frame.one)
+#   
+#   p <- ggplot(series1) + 
+#     geom_segment(aes(x=x.1,y=y.1,
+#                      # color=id.1,
+#                      xend=x.2,yend=y.2),
+#                color = "gray",
+#                size=0.2, 
+#                arrow = arrow(type = "closed", angle = 10,
+#                              length = unit(0.1, "in"))) +
+#     geom_point(aes(x.1,y.1,color=giro3.1,text=paste("id.1:",id.1, "\nt.frame.1: ", t.frame.1)),shape=2) +
+#     geom_point(aes(x.2,y.2,color=giro3.2,text=paste("id.2:",id.2, "\nt.frame.2: ", t.frame.2)),shape=17) +
+#     # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired")) +
+#     scale_color_viridis_c() + theme_minimal() +
+#     ggtitle(paste0(t.frame.one,"-",t.frame.one+1))
+#   
+#   plotly::ggplotly(p)
+# 
+# }) -> plts
+# 
+# plts[12]
+```
+
+###### t.frames vs diff(angulos de frontera)
+
+```{r}
+t.frames.few <-  6:17
+```
+
+
+```{r}
+cdata <- cell.data$data %>% filter(pos == 2, cellID == 772, t.frame %in% t.frames.few)
+
+magickCell(cdata = cdata,
+           paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
+  square_tile(nRow = 2, 
+              annot_labels = cdata$t.frame) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+No se como elegir la escala del suavizado.
+
+Quizas mejor no suavizar, que se encarge DWT.
+
+```{r}
+dof <- 25
+
+warp.mappings2.diff <- warp.mappings2 %>% 
+  filter(t.frame.1 %in% t.frames.few,
+         t.frame.2 %in% t.frames.few) %>% 
+  mutate(delta.giro = giro3.2 - giro3.1) %>%   # final-inicial
+  group_by(t.frame.1) %>% 
+  mutate(delta.giro.smooth =
+           smooth.spline(giro3.2, df = dof)$y -
+           smooth.spline(giro3.1, df = dof)$y
+         )  # final-inicial
+
+# warp.mappings2.diff$delta.giro.gmav <- 
+#   warp.mappings2.diff %>% with({
+#     
+#     mav.sd <- 2
+#     mav.filter.width <- 4
+#     
+#     mav.filter <- dnorm(-mav.filter.width:mav.filter.width, sd = mav.sd)
+#     mav.filter[mav.filter.width+1] <- mav.filter[mav.filter.width+1] * 1 
+#     
+#     delta.giro.smooth.gmav <- 
+#        stats::filter(extend.periodic(giro3.2,mav.filter.width),
+#                      filter = mav.filter,
+#                      method = "convolution") -
+#        stats::filter(extend.periodic(giro3.1,mav.filter.width),
+#                      filter = mav.filter,
+#                      method = "convolution")
+#     
+#     delta.giro.smooth.gmav <-
+#       delta.giro.smooth.gmav[seq_along(delta.giro.smooth.gmav) > mav.filter.width]
+#     
+#     delta.giro.smooth.gmav <- 
+#       delta.giro.smooth.gmav[seq_along(delta.giro.smooth.gmav) <= length(delta.giro.smooth.gmav) - mav.filter.width]
+#     
+#     delta.giro.smooth.gmav
+#   })
+
+warp.mappings2.diff %>% 
+  ggplot(aes(x=id.2,y=delta.giro)) +
+  geom_hline(yintercept = 0, size =.1)+
+  geom_line(color="blue",size=.2) +
+  geom_point(color="blue",size=.2) +
+  geom_line(aes(y=delta.giro.smooth), color="red") +
+  facet_wrap(~t.frame.1)
+```
+
+```{r}
+p2.data1 <- warp.mappings2 %>% filter(t.frame.2 < 18) %>% 
+  group_by(t.frame.1) %>% mutate(giro3.scaled.1 = scale(giro3.1, center = F, scale = T)) %>% ungroup() %>% 
+  group_by(t.frame.2) %>% mutate(giro3.scaled.2 = scale(giro3.2, center = F, scale = T)) %>% ungroup()
+
+p2.data2 <- warp.mappings3 %>% filter(t.frame < 18) %>%
+  select(id,giro3,t.frame) %>% unique() %>% 
+  group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T))
+  
+
+p2 <- p2.data1 %>% 
+#   series.dtw %>%
+#   group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+#   filter(t.frame < 17) %>%
+  
+  ggplot() +
+  # geom_tile(aes(x=id,y=t.frame, fill=giro3)) +
+  geom_segment(aes(x=id.1,   y=t.frame.1, 
+                   #color = giro3.1,
+                   xend=id.2,yend=t.frame.2),
+               color="gray",
+               # data = warp.mappings2 %>% filter(t.frame.2 < 17),
+               # arrow = arrow(type = "opem", angle = 10,
+               #               length = unit(0.1, "in")),
+               size=0.2
+               ) +
+  
+  # geom_point(aes(x=id,y=t.frame,
+  #                color=giro3.scaled,
+  #                size=abs(giro3)), alpha=.5,
+  #                data = series.dtw %>% 
+  #                  group_by(t.frame) %>% 
+  #                  mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+  #                  filter(t.frame < 17)
+  #              ) +
+  
+  # geom_point(aes(id.1,t.frame.1,
+  #                color=giro3.scaled.1,
+  #                size=abs(giro3.1),
+  #                alpha=.5,
+  #                text=paste("id.1:",id.1)),
+  #            data=p2.data1 %>% select(id.1,t.frame.1,giro3.scaled.1,giro3.1,id.old.1) %>% unique()) +
+  # 
+  # geom_point(aes(id.2, t.frame.2,
+  #                color=giro3.scaled.2,
+  #                size=abs(giro3.2),
+  #                alpha=.5,
+  #                text=paste("id.old.2:",id.old.2)),
+  #            data=p2.data1 %>% select(id.2,t.frame.2,giro3.scaled.2,giro3.2,id.old.2) %>% unique()) +
+
+  geom_point(aes(id, t.frame,
+                 color=giro3.scaled,
+                 size=abs(giro3),
+                 alpha=.5
+                 ),
+             data=p2.data2) +
+  
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) +
+  theme_minimal()
+
+# plotly::ggplotly(p2)
+p2
+```
+
+
+
+##### Paths
+
+**PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
+pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
+
+Dibujar el "camino" que recorre un pixel entre tiempos.
+
+Problemas:
+
+* ¿Que pasa en los bordes? Quizas deberia haber corrido el DTW usando una serie de referencia "duplicada".
+  Si no considero esto, va a haber un sesgo en los pixeles del borde, a quedarse en el borde. 
+
+La info de enlace esta en estas variables:
+
+```{r}
+warp.mappings2.unique <- 
+  warp.mappings2 %>% select(id.1,t.frame.1,id.2,t.frame.2) %>% unique()
+```
+
+Elijo un pixel para "rastrear" entre t.frames:
+
+```{r}
+# una flecha cualquiera (por borde)
+# mapping.one <- warp.mappings2.unique %>% sample_n(1)
+
+# un pixel cualquiera (por nodo)
+mapping.one <- warp.mappings2.unique %>%
+  semi_join(warp.mappings2.unique %>% select(id.1, t.frame.1) %>% sample_n(1))
+
+# una flecha especifica (por borde)
+# mapping.one <- warp.mappings2.unique %>%
+#   filter(id.1==56,t.frame.1==3)
+
+mapping.one
+```
+
+Rastrear ese pixel en todos los t.frames:
+
+```{r}
+n.frames <- sum(unique(warp.mappings2.unique$t.frame.2) > mapping.one$t.frame.1[1])
+
+results.list <- list(mapping.one)
+results.list.past <- list(mapping.one)
+
+for(i in 1:n.frames){
+  
+  reference.map <- results.list[[i]]
+  reference.map.past <- results.list.past[[i]]
+  
+  query.map <- warp.mappings2.unique %>% 
+    filter(id.1 %in% reference.map$id.2,
+           t.frame.1 %in% reference.map$t.frame.2)
+  
+  query.map.past <- warp.mappings2.unique %>% 
+    filter(id.2 %in% reference.map.past$id.1,
+           t.frame.2 %in% reference.map.past$t.frame.1)
+  
+  results.list[[i+1]] <- query.map
+  results.list.past[[i+1]] <- query.map.past
+}
+
+results.df <- bind_rows(results.list, .id = "map.idx") %>% 
+  mutate(row.id = 1:n())
+
+results.df.past <- bind_rows(rev(results.list.past[-1]), .id = "map.idx") %>% 
+  {transform(., row.id = {if(nrow(.)==0) integer(0) else 1:nrow(.)} )} # using ifelse failed
+```
+
+Graficar el rastreo:
+
+```{r}
+p <- ggplot() +
+  geom_point(aes(x=id,y=t.frame, 
+                 color=giro3.scaled,
+                 size=abs(giro3)), alpha=.5,
+             data = series.dtw %>% 
+               group_by(t.frame) %>% 
+               mutate(giro3.scaled = scale(giro3, center = F, scale = T))) +
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) + 
+  
+  geom_segment(aes(x=id.1,   y=t.frame.1,
+                   group = row.id,
+                   xend=id.2,yend=t.frame.2),
+               arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in")),
+               data = results.df,
+               color = "blue"
+               ) +
+  
+    geom_segment(aes(x=id.1,   y=t.frame.1,
+                   group = row.id,
+                   xend=id.2,yend=t.frame.2),
+               arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in")),
+               data = results.df.past,
+               color = "red"
+               ) +
+  theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+###### To-do
+
+**PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
+pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
+
+
+### Other tests
+
+#### ¿Multiple alignment?
+
+¿Cómo se hace?
+
+El multiple sequence alignment es un tema tipico de adn/proteinas.
+
+#### Gap opening tests
+
+Ni idea como hacer esto, deberia revisar los algoritmos de alineamiento de secuencias.
+
+```{r}
+length.diff <- abs(nrow(series1) - nrow(series2))
+
+length.diff
+```
+
+```{r}
+# angles1 <- series1$giro3 %>% recenter.vector(10)
+# angles2 <- series2$giro3 #%>% recenter.vector(10)
+# 
+# plot(angles1, type="l")
+# lines(c(
+#         angles2[63:87],
+#         rep(NA,57-29-23),
+#         c(angles2[87:89], angles2[1:11]),
+#         rep(NA,12),
+#         # angles2[13:85]
+#         angles2[11:60]
+#       ), type="l",col="red")
+```
+
+
+#### Lagged correlations tests
+
+```{r}
+# lag.max <- nrow(series1)
+# 
+# lag.cors <- vector(mode = "numeric", length = lag.max)
+# 
+# for(i in 1:lag.max){
+#   
+#   lag.cors[i] <- cor(series1$giro3, recenter.vector(series2$giro3, i),
+#                      method = "spearman")
+#   
+# }
+# 
+# plot(lag.cors)
+# abline(v = which.max(lag.cors))
+# 
+# which.max(lag.cors)
+```
+
+#### CCF lag tests
+
+```{r}
+# series.ccf <- ccf(x = c(series1$giro3, series1$giro3), 
+#                   y = series2$giro3,
+#                   lag.max = nrow(series1))
+# 
+# ccf.lag.max <- series.ccf$lag[which.max(series.ccf$acf)] %% nrow(series1)
+# 
+# ccf.lag.max
+```
+
+```{r}
+# plot(series1$giro3, type="l")
+# lines(series2$giro3, col="red")
+# 
+# plot(series1$giro3 %>% recenter.vector(i = ccf.lag.max), type="l")
+# lines(series2$giro3, col="red")
+```
+
+```{r}
+# cell.angles.one.split <- split(cell.angles.one, ~t.frame)
+# 
+# it.length <- length(cell.angles.one.split)
+# 
+# ccf.max <- vector(mode = "numeric", length = it.length)
+# 
+# for(i in 0:(it.length-1)){
+#   series1 <- cell.angles.one.split[[i + 1]]
+#   next.idx <- (i+1) %% (it.length) + 1
+#   series2 <- cell.angles.one.split[[next.idx]]
+#   
+#   series.ccf <- ccf(series1$giro3, 
+#                     series2$giro3,
+#                     plot = F)
+#   
+#   ccf.max.i <- which.max(series.ccf$acf)
+#   ccf.max[i] <- ccf.max.i
+#   
+#   if(i+1 < it.length)
+#     cell.angles.one.split[[next.idx]]$giro4 <- 
+#       cell.angles.one.split[[next.idx]]$giro3 %>% 
+#       recenter.vector(ccf.max.i)
+# }
+# 
+# cell.angles.one.recenter <- 
+#   cell.angles.one.split %>% 
+#   bind_rows() 
+```
+
+```{r}
+# ggplot(cell.angles.one.recenter) + 
+#   geom_tile(aes(x=id,y=as.factor(t.frame),fill=giro3)) + scale_fill_viridis_c()
+# 
+# ggplot(cell.angles.one.recenter) + 
+#   geom_tile(aes(x=id,y=as.factor(t.frame),fill=giro4)) + scale_fill_viridis_c()
+```
+
+#### Wavelets
+
+Wavelet transform y Budding. Con el gaussian wavelet!
+
+Paquetes:
+
+* `wavelets` sabe usar boundary conitions "periodic", pero no tiene una wavelet gausiana: https://cran.r-project.org/web/packages/wavelets/wavelets.pdf
+* `Rwave::DOG` usa la derivada de gausianas: https://cran.r-project.org/web/packages/Rwave/Rwave.pdf
+* `wmtsa` tiene las gausianas (pg. 18-19): http://cran.nexr.com/web/packages/wmtsa/wmtsa.pdf
+* `wavethresh` no gaussian: https://cran.r-project.org/web/packages/wavethresh/wavethresh.pdf https://ahsanijaz.github.io/2016-09-13-EMG/
+
+##### Test on synthetic patterns
+
+Un DOG posta para usar como serie de prueba/control:
+
+```{r}
+g.series <- 
+  seq(from=-10,to=10,by=0.01) %>% 
+  dnorm(sd = 0.5) 
+
+dog.function <- function(x, .mu=2,.sigma=1) -((x-.mu)/.sigma^2)*exp(-((x-.mu)^2)/(2*.sigma^2))
+
+dog.series <- 
+  seq(from=-10,to=10,by=0.01) %>% 
+  dog.function(.sigma = 0.5) 
+
+dog.series.sum <- (dog.series + rev(recenter.vector(dog.series, 600)))
+```
+
+
+```{r}
+plot(g.series)
+plot(dog.series)
+plot(dog.series.sum)
+```
+
+##### Prepare real data
+
+Load:
+
+```{r}
+d <- readRDS(file="data/dwt.warped.series_2.772.14_15.RDS")
+```
+
+Define smoothing parameter:
+
+```{r}
+dof=30
+```
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% .$y
+giro.dtw2 <- d$giro3_2 %>% smooth.spline(df=dof) %>% .$y
+```
+
+Lo interesante es que la derivada del negativo del angulo *se parece* al gaussian wavelet:
+
+ * https://ataspinar.com/2018/12/21/a-guide-for-using-the-wavelet-transform-in-machine-learning/
+
+```{r}
+giro.dtw1.d1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1))
+giro.dtw2.d1 <- d$giro3_2 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1))
+
+plot(d$giro3_1, type="l", lty=2)
+lines(giro.dtw1, type="l")
+lines(giro.dtw1.d1, col="blue", lwd=1.5)
+abline(h=0)
+```
+
+Mas `dof` hace que esto sea mucho más _wiggly_:
+
+```{r}
+plot(giro.dtw1.d1$y,type="l")
+abline(v=250, lty=2)
+abline(v=450, lty=2)
+```
+
+##### Rwave
+
+```{r}
+#' Extend a vector to the left and right, as if it were periodic
+extend.periodic <- function(x,right=ceiling(length(x)/4),left=right){
+  x.len <- length(x)
+  
+  return(c(
+    x[(x.len-right+1):(x.len)],
+    x,
+    x[1:(left)]
+  ))
+}
+```
+
+
+```{r}
+# serie <- d$giro3_1
+serie <- giro.dtw1
+# serie <- giro.dtw1.d1$y
+
+# serie <- g.series
+# serie <- dog.series
+# serie <- dog.series.sum
+```
+
+
+```{r}
+# serie <- c(serie,serie,serie)
+serie <- extend.periodic(serie, 10)
+# serie <- dog.series
+# serie <- rev(dog.series)
+
+plot(serie, type="l")
+```
+
+
+```{r}
+dog.wavelet <- 
+  Rwave::DOG(serie, noctave = 10, moments = 2, nvoice = 4, plot = F, twoD = T)
+  # Rwave::cwt(serie, noctave = 10, nvoice = 4, plot = F, twoD = T)
+
+dw.df <- matrix_to_df(dog.wavelet) %>% 
+  mutate(pix_value = Re(pix_value))
+```
+
+El máximo de la parte "real" de este terminó abajo a la derecha, sobre el borde:
+
+```{r}
+ggplot(dw.df, aes(y,x,fill=pix_value )) + 
+  geom_tile() + 
+  geom_point(data = filter(dw.df, pix_value==max(pix_value))) +
+  scale_fill_viridis_c()
+```
+
+Evidentemente esta detectando picos, y subir el parametro `moments` no hace nada.
+
+Pero cambiarle el signo al input invierte el resultado, y da lo correcto:
+
+```{r}
+serie <- -giro.dtw1
+serie <- extend.periodic(serie, 10)
+
+dog.wavelet <- 
+  Rwave::DOG(serie, noctave = 10, moments = 2, nvoice = 4, plot = F, twoD = T)
+
+dw.df <- matrix_to_df(dog.wavelet) %>% 
+  mutate(pix_value = Re(pix_value))
+
+ggplot(dw.df, aes(y,x,fill=pix_value )) + 
+  geom_tile() + 
+  geom_point(data = filter(dw.df, pix_value==max(pix_value))) +
+  scale_fill_viridis_c()
+```
+
+Pero no me convence, es poco monótono.
+
+##### wavelets
+
+No tiene el gausiano:
+
+```{r}
+dwt.result <- wavelets::dwt(-giro.dtw1.d1$y, n.levels = 9)
+
+plot(dwt.result)
+```
+
+##### wmtsa
+
+No esta disponible en CRAN, quien sabe por que:
+
+* Archive link: https://cran.r-project.org/src/contrib/Archive/wmtsa/wmtsa_2.0-3.tar.gz
+
+```{r, eval=F}
+if(F) install.packages("~/Software/R/paquetes/wmtsa_2.0-3.tar.gz", repos = NULL, type = "source")
+```
+
+###### synthetic tests
+
+Obs: "gaussian" es lo mismo que "sombrero" o "mexican hat".
+
+Obs: parece que toma "la parte real".
+
+Probe todas y podria usar dos:
+
+* `gaussian1` sobre la derivada del smoothing.
+* `gaussian2` sobre los datos sin derivar
+
+```{r}
+# DOG pattern with 1st order DOG wavelet: POOR
+serie <- g.series %>% extend.periodic(10)
+wmtsa.result <- wmtsa::wavCWT(x = serie, wavelet="gaussian2")
+
+plot(serie)
+as.matrix(wmtsa.result) %>% t %>% plot_matrix() + coord_cartesian() +scale_y_continuous()
+```
+
+
+```{r}
+# DOG pattern with 1st order DOG wavelet: GOOD
+serie <- dog.series %>% extend.periodic(10)
+wmtsa.result <- wmtsa::wavCWT(x = serie, wavelet="gaussian1")
+
+plot(serie)
+as.matrix(wmtsa.result) %>% t %>% plot_matrix() + coord_cartesian() +scale_y_continuous()
+```
+
+
+```{r}
+# offset DOG shifted sum pattern with 1st/nd order DOG wavelet: FINE (but POOR on noisy)
+serie <- dog.series.sum %>% extend.periodic(10)
+wmtsa.result <- wmtsa::wavCWT(x = serie, wavelet="gaussian2")
+
+plot(serie)
+as.matrix(wmtsa.result) %>% t %>% plot_matrix() + coord_cartesian() +scale_y_continuous()
+```
+
+###### cell boundary test
+
+```{r}
+plot(giro.dtw1.d1$y)
+```
+
+```{r}
+wmtsa.result <- wmtsa::wavCWT(x = giro.dtw1.d1$y, wavelet="gaussian1")
+
+wmtsa.result.df <- wmtsa.result %>% t() %>% matrix_to_df()
+```
+
+```{r}
+# plot(wmtsa.result,type="image")
+# abline(v=250, lty=2)
+# abline(v=450, lty=2)
+
+p <- wmtsa.result.df %>% ggplot(aes(x,y,fill=pix_value)) +
+  geom_tile() +
+  geom_point(data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  geom_text(aes(label=paste("x",x,"y",y,"pix_value",signif(pix_value,3))),nudge_y = 5,
+            data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  geom_vline(xintercept = 250, linetype=2) +
+  geom_vline(xintercept = 450, linetype=2) +
+  scale_fill_viridis_c() +
+  theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+Conseguir el sitio donde se encuentró el máximo:
+
+```{r}
+max.location <- wmtsa.result.df$x[which.max(wmtsa.result.df$pix_value)]
+max.location.orig <- giro.dtw1.d1$x[max.location]
+```
+
+Graficar sobre trazas:
+
+```{r}
+plot(giro.dtw1.d1$y)
+abline(v=250, lty=2)
+abline(v=max.location, lty=3,col="red")
+abline(v=450, lty=2)
+
+plot(d$giro3_1, type="l")
+lines(giro.dtw1, lty=2)
+abline(v=giro.dtw1.d1$x[250], lty=2, col="gray")
+abline(v=giro.dtw1.d1$x[max.location], lty=3,col="red")
+abline(v=giro.dtw1.d1$x[450], lty=2, col="gray")
+```
+
+Obs: El resultado se invierte si:
+
+* cambia de signo el en input (que no se da en los datos).
+* dirección del input (que podria darse, aunque chequeando `ringDir` de `sp::Polygon` parece que es igual para todos los paths).
+
+###### apply to diffs
+
+```{r}
+dof <- 25
+
+warp.mappings2.diff <- warp.mappings2 %>% 
+  filter(t.frame.2 < 17) %>% 
+  mutate(delta.giro = giro3.2 - giro3.1) # final-inicial
+
+warp.mappings2.diff.split <- split(warp.mappings2.diff, ~t.frame.1)
+```
+
+
+```{r}
+# get.sigma.nls <- function(r){
+#   # r <- wmtsa.result[max.scale.idx,]
+#   # First present the data in a data-frame
+#   tab <- data.frame(x=seq_along(r), r=r)
+#   #Apply function nls
+#   (res <- nls( r ~ k*exp(-1/2*(x-mu)^2/sigma^2), start=c(mu=15,sigma=5,k=1) , data = tab))
+#   res$m$getAllPars()["sigma"]
+# }
+```
+
+
+```{r}
+diff.split.dwt <- 
+  sapply(warp.mappings2.diff.split, function(d2){
+    
+    # d2 <- warp.mappings2.diff.split$`14`
+    
+    # delta.giro.smooth.d1 <- d2$delta.giro %>%
+    #   extend.periodic(10) %>%
+    #   smooth.spline(df = dof) %>%
+    #   predict(deriv=1) %>% .$y %>% contract.vector(10)
+    
+    giro.dtw1.d1 <- d2$giro3.1 %>% 
+      smooth.spline(df=dof) %>% 
+      # predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1)) 
+      predict(deriv=1) 
+    
+    # wmtsa.result <- delta.giro.smooth.d1 %>%
+    wmtsa.result <- giro.dtw1.d1$y %>%
+      extend.periodic(10) %>% 
+      wmtsa::wavCWT(wavelet="gaussian1", scale.range = c(5,20), n.scale = 10) %>% 
+      t()
+    
+    wmtsa.result <- wmtsa.result[,contract.vector(1:ncol(wmtsa.result), 10)]
+    # wmtsa.result <- wmtsa.result[1:nrow(wmtsa.result) > 5,]
+    
+    max.idxs <- which(wmtsa.result == max(wmtsa.result), arr.ind = TRUE)
+    max.val = max(wmtsa.result)
+    max.scale.idx <- max.idxs[1]
+    max.loc.idx <- max.idxs[2]
+    
+    # sd.loc <- get.sigma.nls(r=wmtsa.result[max.scale.idx,])
+      
+    # w.mean.location <- weighted.mean(x = 1:ncol(wmtsa.result),
+    #                                  w = (wmtsa.result[max.scale.idx,]) * wmtsa.result[max.scale.idx,] > 0)
+    
+    p <- wmtsa.result %>% matrix_to_df() %>%
+      ggplot(aes(x,y,fill=pix_value)) +
+      geom_tile() +
+      scale_fill_viridis_c() +
+      theme_minimal() +ggtitle(d2$t.frame.1[1])
+    
+    print(p)
+    
+    c(
+      t.frame.1 = d2$t.frame.1[1],
+      max.location=max.loc.idx,
+      # max.location.w=w.mean.location,
+      # sd.location=sd.loc,
+      max.scale=max.scale.idx,
+      max.val=max.val
+    )
+  }) %>% t() %>% as_data_frame()
+
+# diff.split.dwt
+```
+
+```{r}
+warp.mappings2.diff %>% 
+  
+  filter(t.frame.1 < 17) %>% 
+  
+  ggplot(aes(x=id.2,y=delta.giro)) +
+  
+  geom_vline(aes(xintercept = max.location, 
+                 size=max.val),
+             alpha=.5,
+             data=filter(diff.split.dwt, t.frame.1 < 17)) +
+
+  geom_hline(yintercept = 0, size =.1) +
+  
+  geom_line(color="blue",size=.2) +
+  geom_point(color="blue",size=.2) +
+  
+  geom_line(aes(y=delta.giro*4), color="red") +
+  
+  facet_wrap(~t.frame.1) +
+  theme_minimal()
+```
+
+
+```{r}
+# plot(wmtsa.result,type="image")
+# abline(v=250, lty=2)
+# abline(v=450, lty=2)
+
+p <- wmtsa.result.df %>% ggplot(aes(x,y,fill=pix_value)) +
+  geom_tile() +
+  geom_point(data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  geom_text(aes(label=paste("x",x,"y",y,"pix_value",signif(pix_value,3))),nudge_y = 5,
+            data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  geom_vline(xintercept = 250, linetype=2) +
+  geom_vline(xintercept = 450, linetype=2) +
+  scale_fill_viridis_c() +
+  theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+Conseguir el sitio donde se encuentró el máximo:
+
+```{r}
+
+```
+
+Graficar sobre trazas:
+
+```{r}
+plot(giro.dtw1.d1$y)
+abline(v=250, lty=2)
+abline(v=max.location, lty=3,col="red")
+abline(v=450, lty=2)
+
+plot(d$giro3_1, type="l")
+lines(giro.dtw1, lty=2)
+abline(v=giro.dtw1.d1$x[250], lty=2, col="gray")
+abline(v=giro.dtw1.d1$x[max.location], lty=3,col="red")
+abline(v=giro.dtw1.d1$x[450], lty=2, col="gray")
+```
+
+##### Simetria por `cor`
+
+Asumiendo que encontre un feature, quizas valga fijarme sies simétrico de alguna manera.
+
+Por ejemplo, viendo si correlacionan bien los angulos en direcciones opuestas
+respecto al lugar donde esta el feature.
+
+Un problema es que las series tienen autocorrelacion porque si:
+cuando un angulo sube un poco (ruidosamente) es probable que el siguiente baje de más.
+
+Eso se ve en el coso de autocorrelacion acf/pacf.
+
+```{r}
+# right.side <- d$giro3_1[(1:length(d$giro3_1)) > max.location.orig]
+# left.side <- d$giro3_1[(1:length(d$giro3_1)) < max.location.orig]
+
+right.side <- giro.dtw1[(1:length(giro.dtw1)) > max.location.orig]
+left.side <- giro.dtw1[(1:length(giro.dtw1)) < max.location.orig]
+
+min.length <- min(length(right.side), length(left.side))
+cor(x = right.side[1:min.length], y = rev(left.side)[1:min.length])
+ccf(x = right.side, y = rev(left.side))
+```
+
+
+```{r}
+wmtsa.result <- wmtsa::wavCWT(x = -giro.dtw1, wavelet="gaussian2")
+
+wmtsa.result.df <- wmtsa.result %>% t() %>% matrix_to_df()
+
+p <- wmtsa.result.df %>% ggplot(aes(x,y,fill=pix_value)) +
+  geom_tile() +
+  geom_point(data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  geom_text(aes(label=paste("x",x,"y",y,"pix_value",signif(pix_value,3))),nudge_y = 5,
+            data = filter(wmtsa.result.df, pix_value==max(pix_value))) +
+  # geom_vline(xintercept = 250, linetype=2) +
+  # geom_vline(xintercept = 450, linetype=2) +
+  scale_fill_viridis_c() +
+  theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+
+#### Windowed CCF, DTW and CCF
+
+```{r}
+w <- (longest.boundary/20) %>% ceiling()
+w <- 50
+s <- 10
+```
+
+```{r}
+series_1 <- cell.perim.angles.list$`2-772-3`$giro3
+series_1 <- c(series_1,series_1[1:w])
+series_2 <- cell.perim.angles.list$`1-1007-7`$giro3
+series_2 <- c(series_2,series_2[1:w])
+```
+
+
+```{r}
+plot(series_1 %>% scale01, type="l")
+lines(series_2 %>% scale01, col="red")
+```
+
+```{r}
+idxs <- length(series_1) - w + 1
+# idxs <- 1:idxs
+idxs <- seq(from=1,to=idxs,by=s)
+
+cor.m <- matrix(nrow = length(idxs), ncol = length(idxs))
+dtw.m <- matrix(nrow = length(idxs), ncol = length(idxs))
+ccf.m <- matrix(nrow = length(idxs), ncol = 27) # 27 es la cantidad de lags
+
+for(i in seq_along(idxs)){
+  for(j in seq_along(idxs)){
+    
+    .i <- idxs[i] # i is index for series 1 (columns in matrix <-> x)
+    .j <- idxs[j] # j is index for series 2 (rows in matrix <-> x)
+    
+    w1 <- series_1[.i:(.i+w-1)]
+    w2 <- series_2[.j:(.j+w-1)]
+
+    cor.m[j, i] <- 
+      cor(w1, w2, method = "pearson") #%>% print()
+    
+    dtw.m[j, i] <- 
+      dtw::dtwDist(mx = t(as.matrix(w1)),
+                   my = t(as.matrix(w2)))
+    
+    cc.res <- ccf(w1, series_2, plot = F)
+    ccf.m[i,] <- cc.res$acf
+  }
+}
+
+cor.df <- matrix_to_df(cor.m)
+dtw.df <- matrix_to_df(dtw.m)
+ccf.df <- matrix_to_df(ccf.m)
+```
+
+```{r}
+plt <- 
+  ggplot(ccf.df, aes(x,y)) +
+  geom_tile(aes(fill=pix_value)) + 
+  scale_fill_viridis_c() + coord_equal() + theme_minimal() +
+  ggtitle("CCF de una ventana de la serie 1 contra la serie 2 entera")
+
+# plotly::ggplotly(plt)
+plt
+
+plt <- 
+  ggplot(ccf.df, aes(x,y)) +
+  geom_tile(aes(fill=pix_value^2)) + 
+  scale_fill_viridis_c() + coord_equal() + theme_minimal() +
+  ggtitle("CCF de una ventana de la serie 1 contra la serie 2 entera")
+
+# plotly::ggplotly(plt)
+plt
+```
+
+```{r}
+plt <- 
+  ggplot(cor.df, aes((x/max(x))*length(series_1),
+                     (y/max(y))*length(series_1))) +
+  geom_tile(aes(fill=pix_value)) + 
+  scale_fill_viridis_c() + coord_equal() + theme_minimal()
+
+# plotly::ggplotly(plt)
+plt
+
+plt <- 
+  ggplot(cor.df, aes((x/max(x))*length(series_1),
+                     (y/max(y))*length(series_1))) +
+  geom_tile(aes(fill=pix_value^2)) +
+  scale_fill_viridis_c() + coord_equal() + theme_minimal()
+
+# plotly::ggplotly(plt)
+plt
+```
+
+
+```{r}
+w1 <- w+s*5
+w2 <- w+s*4+1
+plot(series_1[w1:(w1+w-1)] %>% scale01(), type="l")
+lines(series_2[w2:(w2+w-1)] %>% scale01(), col="red")
+```
+
+```{r}
+plt <- 
+  ggplot(dtw.df, aes(x,y)) +
+  geom_tile(aes(fill=pix_value)) + 
+  scale_fill_viridis_c() + coord_equal() + theme_minimal() +
+  ggtitle("Rarisimo que el medio la serie 1 se parece a casi toda la serie 2",
+          "No sirve asi")
+
+# plotly::ggplotly(plt)
+plt
+```
+
+
+```{r}
+w1 <- w+s*10
+w2 <- w+s*5
+plot(series_1[w1:(w1+w-1)] %>% scale01(), type="l")
+lines(series_2[w2:(w2+w-1)] %>% scale01(), col="red")
+```
