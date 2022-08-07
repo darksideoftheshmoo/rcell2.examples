@@ -22,21 +22,26 @@ urlcolor: blue
 ---
 
 ```{r setup}
+knitr::opts_knit$set(root.dir = here::here())
+
 library(rcell2)
 library(rcell2.cellid)
-# library(rcell2.examples)
-library(utiles)
+
+devtools::load_all()  # library(rcell2.examples)
+
 library(tidyverse)
 library(magick)
+
+library(TSclust)
 ```
 
 ## Segmentation
 
 ```{r}
-data.dir <- "../../../data/image_samples_time_series/"
+data.dir <- "data/time_series_sample/"
 
 parameters.list <- rcell2.cellid::parameters_default(
-  background_reject_factor = 1.3,
+  background_reject_factor = 0.75,
   max_split_over_minor = 0.6,
   max_dist_over_waist = 6,
   max_pixels_per_cell = 3500
@@ -47,20 +52,28 @@ cell.args <- arguments(data.dir, parameters = parameters_write(parameters.list))
 
 
 ```{r}
-# cell.out <- cell.args %>%
-#   # filter(ch == "TFP", t.frame %in% c(1,10,20,40)) %>%
-#   cell2(output_coords_to_tsv = T)
+cell.out <- cell.args %>%
+  cell2(output_coords_to_tsv = T, dry = T)
 ```
 
-## Load cell data
+## Load cell data and boundaries
 
 ```{r}
 cell.data <- cell.load.alt(data.dir)
-cell.boundaries <- cell.load.boundaries(data.source = "masks.tsv", arguments = cell.args, flags = 0)
 
 summary(cell.data)
-str(cell.boundaries)
+```
 
+
+```{r}
+cell.boundaries <- 
+  cell.load.boundaries(data.source = "masks.tsv", arguments = cell.args, flags = 0)
+
+str(cell.boundaries)
+```
+
+
+```{r}
 cdata <- cell.data$data
 images <- cell.data$images
 ```
@@ -177,7 +190,8 @@ cell.perims.smooth <-
 ```{r}
 ggplot(cell.perims) +
   geom_point(aes(x=p2p.diff, y=p2p.ratio)) +
-  ggtitle("Summary values", "Difference and ratio of smooth boundary length v.s. expected length for a cirular boundary.")
+  ggtitle("Summary values", 
+          "Difference and ratio of smooth boundary length v.s. expected length for a cirular boundary.")
 ```
 
 #### Join to cell.data
@@ -255,8 +269,6 @@ cell.perim.angles <-
   )
 ```
 
-Nota: acá puede venir bien la función `recenter.vector`, para recentrar las "trazas" de ángulos.
-
 ### SD of angles
 
 ```{r}
@@ -274,23 +286,26 @@ cell.angles.sd <-
 ## Save calculations
 
 ```{r}
-dir.create("sample_data", showWarnings = F)
-cell.data %>% saveRDS(
-  "sample_data/cell.data.RDS")
-cell.boundaries %>% saveRDS(
-  "sample_data/cell.boundaries.RDS")
-cell.boundaries.list %>% saveRDS(
-  "sample_data/cell.boundaries.list.RDS")
-cell.perims.list %>% saveRDS(
-  "sample_data/cell.perims.list.RDS")
-cell.perims %>% saveRDS(
-  "sample_data/cell.perims.RDS")
-cell.perims.smooth %>% saveRDS(
-  "sample_data/cell.perims.smooth.RDS")
-cell.perim.angles %>% saveRDS(
-  "sample_data/cell.perim.angles.RDS")
-cell.angles.sd %>% saveRDS(
-  "sample_data/cell.angles.sd.RDS")
+tmp_dir <- tempdir() %>% paste0("/sample_data")
+unlink(tmp_dir, recursive = T)
+dir.create(tmp_dir, showWarnings = F)
+
+saveRDS(cell.data,
+        paste0(tmp_dir, "cell.data.RDS"))
+saveRDS(cell.boundaries,
+        paste0(tmp_dir, "cell.boundaries.RDS"))
+saveRDS(cell.boundaries.list,
+        paste0(tmp_dir, "cell.boundaries.list.RDS"))
+saveRDS(cell.perims.list,
+        paste0(tmp_dir, "cell.perims.list.RDS"))
+saveRDS(cell.perims,
+        paste0(tmp_dir, "cell.perims.RDS"))
+saveRDS(cell.perims.smooth,
+        paste0(tmp_dir, "cell.perims.smooth.RDS"))
+saveRDS(cell.perim.angles,
+        paste0(tmp_dir, "cell.perim.angles.RDS"))
+saveRDS(cell.angles.sd,
+        paste0(tmp_dir, "cell.angles.sd.RDS"))
 ```
 
 ## Finding patterns in angles
@@ -300,21 +315,25 @@ cell.angles.sd %>% saveRDS(
 Sample a couple cells:
 
 ```{r}
-xy.spline_nr.angles2 <- cell.perim.angles %>% sample(1) %>% bind_rows(.id = "id.cell") %>% 
-  separate(id.cell, into = c("pos", "cellID", "t.frame"), remove = F)
-xy.spline_nr.angles5 <- cell.perim.angles %>% sample(1) %>% bind_rows(.id = "id.cell") %>% 
+xy.spline_nr.angles2 <- cell.perim.angles %>%
+  sample(1) %>% bind_rows(.id = "id.cell") %>% 
   separate(id.cell, into = c("pos", "cellID", "t.frame"), remove = F)
 
+xy.spline_nr.angles5 <- cell.perim.angles %>% 
+  sample(1) %>% bind_rows(.id = "id.cell") %>% 
+  separate(id.cell, into = c("pos", "cellID", "t.frame"), remove = F)
+
+# Save IDs for later:
 id2 <- xy.spline_nr.angles2$id.cell[1]
 id5 <- xy.spline_nr.angles5$id.cell[1]
+
+id2
+id5
 ```
 
 Inspect:
 
 ```{r}
-id2
-id5
-
 cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>%
   # group_by(id.cell) %>% 
   # mutate(x=x-mean(x), y=y-mean(y)) %>% 
@@ -327,10 +346,18 @@ cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>%
   theme(aspect.ratio = 1)
 ```
 
-Save sample and re-plot:
+Sample a cell from the timecourse:
 
 ```{r}
-ids <- c("2.258.13", "2.38.20")
+cdata %>% filter(cellID == 71) %>% 
+  rcell2.magick::cellStrip(images) %>% 
+  rcell2.magick::magickForKnitr() %>% knitr::include_graphics()
+```
+
+Plot boundaries:
+
+```{r}
+ids <- c("7.71.0", "7.71.1")  # Position 7, cell 71, frames 0 and 1.
 
 xy.spline_nr.angles2 <- cell.perim.angles[ids[1]] %>% 
   bind_rows(.id = "id.cell") %>% 
@@ -346,42 +373,45 @@ id5 <- ids[2]
 cell.perims.smooth %>% filter(id.cell %in% c(id2, id5)) %>% 
   ggplot(aes(x=x,y=y, color=type, group=type)) + 
   geom_path() + 
-  facet_wrap(~id.cell, scales = "free") + 
-  theme(aspect.ratio = 1)
+  facet_wrap(~id.cell) + 
+  theme(aspect.ratio = 1) + coord_equal() + scale_y_reverse()
 ```
 
+Plor angle traces, note that angles are negative on average:
 
 ```{r}
 y2 <- xy.spline_nr.angles2$giro3
 y5 <- xy.spline_nr.angles5$giro3
 
-plot(y2, type="l", col = "black", ylim = c(-50, 50))
-lines(y5, type="l", col = "red")
+plot(y5, type="l", col = "black", ylim = c(-50, 50))
+lines(y2, type="l", col = "red")
 abline(h=0, lty=2)
 ```
 
-Consigo misma:
+Cross-correlation of a trace ith itself:
 
 ```{r}
-ccf(rep(y2, 2), rep(y5, 2))
+ccf.result <- ccf(rep(y2, 2), rep(y2, 2), lag.max = 10000)
+
+ccf.acf <- data.frame(acf=ccf.result$acf[,,1], lag=ccf.result$lag[,,1]) %>% 
+  filter(lag > 0)
+
+plot(ccf.acf$lag, ccf.acf$acf, type="l")
+abline(v = length(y2), col=2)
 ```
 
-Con la otra:
+Cross correlation of a trace with the other one:
 
 ```{r}
-ccf(y2, recenter.vector(y5,15))
+ccf.result <- ccf(rep(y2, 2), rep(y5, 2), lag.max = 10000)
+
+ccf.acf <- data.frame(acf=ccf.result$acf[,,1], lag=ccf.result$lag[,,1]) %>% 
+  filter(lag > 0)
+
+plot(ccf.acf$lag, ccf.acf$acf, type="l")
 ```
 
-### Podria probar con "wavelets"
-
-https://www.researchgate.net/figure/The-popular-Mexican-hat-wavelet-the-second-derivative-of-the-Gaussian-red-valid-for-1_fig4_259129836
-
-```{r}
-?wavelets::modwt()
-?wavelets::wt.filter()
-```
-
-### Podria usar DTW
+### DTW
 
 https://stats.stackexchange.com/questions/133404/finding-occurrences-of-specific-patterns-in-time-series
 
@@ -389,7 +419,7 @@ https://stats.stackexchange.com/questions/133404/finding-occurrences-of-specific
 
 Para usar DTW, primero hay que interpolar las curvas que son mas "cortas".
 
-Un problema de esto es que la suma de los angulos ya no va a dar 360.
+Para eso usamos `approx`.
 
 ```{r}
 max.len <- max(length(y2), length(y5))
@@ -407,21 +437,25 @@ lines(x = 1:length(y2.ip),
       y = y2.ip, col = "blue")
 ```
 
-Bueno, no parece estar tan mal, aunque lo de los ángulos es cierto, no da 360:
+
+Un problema de esto es que la suma de los ángulos ya no va a dar 360.
+Podría solucionarse escalando, quizás.
 
 ```{r}
 sum(y2)
 sum(y2.ip)
 ```
 
-Mediana de la longitud de los bordes:
+> Es cierto, no da 360, pero no parece estar tan mal.
+
+Mediana de la longitud de los bordes en todo el exp:
 
 ```{r}
 b.median <- median(sapply(cell.perim.angles, nrow)) 
 b.median
 ```
 
-Interpolar
+Interpolar todas las series de angulos a esa mediana:
 
 ```{r}
 cell.perim.angles.ip <- 
@@ -449,7 +483,7 @@ lines(x = 1:b.median,
 ```
 
 
-#### distancias y clustering
+#### Distancias y clustering para DTW
 
 Elegir funcion de distancia
 
@@ -486,7 +520,16 @@ heatmap(
 )
 ```
 
-### pyWavelets
+### Wavelets?
+
+https://www.researchgate.net/figure/The-popular-Mexican-hat-wavelet-the-second-derivative-of-the-Gaussian-red-valid-for-1_fig4_259129836
+
+```{r}
+?wavelets::modwt()
+?wavelets::wt.filter()
+```
+
+#### pyWavelets
 
 > Wavelet Transforms in Python
 

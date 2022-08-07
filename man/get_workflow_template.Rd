@@ -9,9 +9,6 @@ get_workflow_template(file_name = "rcell2_workflow_template.Rmd")
 \arguments{
 \item{file_name}{File name for the wokflow template.}
 }
-\value{
-
-}
 \description{
 Will donwload the .Rmd file to the current working directory.
 }
