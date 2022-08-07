@@ -37,9 +37,17 @@ library(rcell2.magick)
 
 ## Notas
 
-Copiado de:
 
-    ~/Projects/Colman/gitlabs_acl/rtcc/far1/20210826-pruebaexpSkotheim1-lavemaso/03-boundary_angles.Rmd
+En este notebook hay código para:
+
+1. Suavizar bordes de la segmentación.
+2. Convertir los bordes a series de ángulos.
+3. Pruebas para alinear series de ángulos de la misma célula en diferentes tiempos.
+  * DTW
+  * Wavelets
+  * y misc.
+
+Copiado de: ~/Projects/PhD/gitlabs_acl/rtcc/far1/20210826-pruebaexpSkotheim1-lavemaso/03-boundary_angles.Rmd
 
 ## Load data
 

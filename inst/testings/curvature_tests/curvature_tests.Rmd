@@ -310,9 +310,7 @@ saveRDS(cell.angles.sd,
 
 ## Finding patterns in angles
 
-### Podria usar autocorrelacion
-
-Sample a couple cells:
+### Sample a cell
 
 ```{r}
 xy.spline_nr.angles2 <- cell.perim.angles %>%
@@ -388,7 +386,9 @@ lines(y2, type="l", col = "red")
 abline(h=0, lty=2)
 ```
 
-Cross-correlation of a trace ith itself:
+### Cross-correlation of a trace
+
+With itself (repeated twice):
 
 ```{r}
 ccf.result <- ccf(rep(y2, 2), rep(y2, 2), lag.max = 10000)
@@ -414,6 +414,11 @@ plot(ccf.acf$lag, ccf.acf$acf, type="l")
 ### DTW
 
 https://stats.stackexchange.com/questions/133404/finding-occurrences-of-specific-patterns-in-time-series
+
+CRAN task views:
+
+* https://cran.r-project.org/web/views/TimeSeries.html
+* https://cran.r-project.org/view=SpatioTemporal
 
 #### Preparar datos
 
@@ -483,7 +488,7 @@ lines(x = 1:b.median,
 ```
 
 
-#### Distancias y clustering para DTW
+#### Distancias, Clustering y Heatmap
 
 Elegir funcion de distancia
 
@@ -498,7 +503,7 @@ Elegir funcion de clustering
 hclustfunc <- function(x, ...) hclust(x, method="single", ...)
 ```
 
-Cluster
+Cluster:
 
 ```{r}
 d <- distfunc(angles)
@@ -506,9 +511,7 @@ d <- distfunc(angles)
 cl <- hclustfunc(d)
 ```
 
-#### Heatmap
-
-Heatmap
+Heatmap:
 
 ```{r}
 heatmap(
@@ -519,6 +522,875 @@ heatmap(
   main = "DTW of angle series"
 )
 ```
+
+#### Univariate DTW: angles
+
+Jugar un poco:
+
+```{r}
+angles1 <- y2.ip
+angles2 <- y5
+
+# ids <- c("7.71.0", "7.71.1")  # Position 7, cell 71, frames 0 and 1.
+anlgle.series <- cell.perim.angles[ids] %>% bind_rows(.id = "id.cell") %>% 
+  separate(id.cell, c("pos", "cellID", "t.frame"), convert = T, remove = F)
+
+series1 <- anlgle.series %>% filter(id.cell == ids[1])
+series2 <- anlgle.series %>% filter(id.cell == ids[2])
+```
+
+
+```{r}
+cell.perim.angles$`7.71.0`
+
+dtw::dtw(x=angles2 %>% recenter.vector(135), 
+         y=angles1,
+         
+         # open.begin = T, open.end = T, 
+         # step.pattern = dtw::asymmetricP0
+         
+         keep.internals = T,
+         step.pattern = dtw::asymmetric
+         # 
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 1, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 1, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 5, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 5, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 7, slope.weighting = "c", smoothed = F)
+         # step.pattern = dtw::rabinerJuangStepPattern(type = 7, slope.weighting = "c", smoothed = T)
+         # step.pattern = dtw::typeIVc
+         ) -> dtw.result
+```
+
+
+```{r}
+plot(dtw.result)
+plot(dtw.result, type="two",
+     # off=-20, 
+     match.lty=3, match.indices=40)
+dtw::dtwPlotThreeWay(dtw.result)
+```
+
+Explorando el output: lo siguiente quizas sirva para ver los "lags" locales:
+
+> Quizas tenga que ver con donde crecio la frontera!
+
+```{r}
+plot(dtw.result$index1, dtw.result$index2)
+```
+
+Probar dtw con todos los posibles recentrados:
+
+```{r}
+dtw.results <- 
+  sapply(seq.int(1,length(angles2), by = 1), function(i){
+    dtw.result <- 
+      dtw::dtw(x=angles2 %>% recenter.vector(i), 
+               y=angles1,
+               # open.begin = T, open.end = T, keep.internals = T,
+               # step.pattern = dtw::asymmetricP0
+               
+               # step.pattern = dtw::asymmetric
+               )
+    return(c(i=i, dtw.dist=dtw.result$distance))
+  }) %>%
+  t() %>% as.data.frame()
+```
+
+Quedarme con el recentrado que genera la minima distancia:
+
+```{r}
+dtw.lag <- dtw.results$i[which.min(dtw.results$dtw.dist)]
+dtw.lag.d <- dtw.results$dtw.dist[which.min(dtw.results$dtw.dist)]
+
+dtw.lag
+```
+
+```{r}
+dtw.results %>% ggplot() + 
+  geom_point(aes(i, dtw.dist)) +
+  geom_vline(xintercept = dtw.lag, color="red") +
+  geom_hline(yintercept = dtw.lag.d, color="red")
+```
+
+Graficar: ¿quedo bien?
+
+```{r}
+series2.dtw_centered <- 
+  series2 %>% select(x,y,giro3,pos,t.frame,cellID) %>% 
+  mutate(x = recenter.vector(x, dtw.lag), 
+         y = recenter.vector(y, dtw.lag),
+         giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+  mutate(id = 1:n())
+
+series1.dtw_centered <- 
+  series1 %>% select(x,y,giro3,pos,t.frame,cellID) %>% 
+  mutate(id = 1:n())
+
+ggplot(mapping=aes(x=x,y=y,color=id)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2) +
+  scale_color_viridis_c()
+
+ggplot(mapping=aes(x=x,y=y,color=giro3)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2, size =2) +
+  scale_color_viridis_c() + theme_minimal()
+```
+
+A ver si puedo dibujar flechitas:
+
+```{r}
+dtw.result <- 
+  dtw::dtw(x=series2$giro3 %>% recenter.vector(dtw.lag), 
+           y=series1$giro3,
+           # open.begin = T, open.end = T, 
+           keep.internals = T,
+           step.pattern = dtw::asymmetric
+           )
+
+plot(dtw.result, type="two",off=-50,match.lty=3,match.indices=40)
+# plot(dtw.result)
+plot(dtw.result$index1,dtw.result$index2)
+# length(dtw.result$index1)
+# length(dtw.result$index2)
+```
+
+
+```{r}
+d <- 
+  mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                               series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+         dtw.result$index2, 
+         dtw.result$index1) %>% t %>% as.data.frame %>% 
+  mutate(id = 1:n()) %>% 
+  rename(x1=V1, y1=V2, giro3_1=V3,
+         x2=V4, y2=V5, giro3_2=V6)
+
+
+p <- 
+  ggplot(mapping=aes(x=x,y=y,color=id)) +
+    geom_segment(aes(x=x1,y=y1,
+                     xend=x2,yend=y2,
+                     color=id),
+                 data = d,
+                 size=0.2, 
+                 arrow = arrow(type = "closed", angle = 10, ends = "both",
+                               length = unit(0.1, "in"))) +
+    geom_point(aes(shape=as.factor(t.frame)), color="black", size=1, data = bind_rows(series1.dtw_centered, series2.dtw_centered)) + 
+    # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
+    scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired"), guide = "none") + scale_shape_manual(values = 1:2) +
+    coord_equal() + 
+    theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+Hermoso.
+
+```{r}
+p.filename <- paste0(
+  here::here("curvature_tests"),
+  "/plots/DTW_angle_alignment.pdf"
+)
+
+ggsave(filename = p.filename, plot = p)
+# saveRDS(d, file="data/dwt.warped.series_2.772.14_15.RDS")
+```
+
+```{r}
+cell.data$data %>% 
+  semi_join(bind_rows(series1.dtw_centered, series2.dtw_centered), 
+            by = c("cellID", "t.frame", "pos")) %>% 
+rcell2.magick::cellStrip(paths = images) %>% 
+  rcell2.magick::magickForKnitr() %>% knitr::include_graphics()
+```
+
+
+##### Diferencia entre trazas
+
+1. Graficar secuencia de angulos "warpeada" (alineada) por DTW.
+2. Calcular la diferencia.
+
+```{r}
+plot(d$giro3_1, type="l")
+lines(d$giro3_2, col="red")
+# abline(v=28, lty=2)
+# abline(v=50, lty=2)
+
+plot(d$giro3_1-d$giro3_2, col="blue", type="l")
+```
+
+Es bastante ruidoso, a ver si lo suavizo:
+
+```{r}
+dof=25
+```
+
+Smooth por splines:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% .$y
+giro.dtw2 <- d$giro3_2 %>% smooth.spline(df=dof) %>% .$y
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+Smooth por splines (primera derivada):
+
+```{r}
+giro.dtw1.d1 <- d$giro3_1 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1)) %>% .$y
+giro.dtw2.d1 <- d$giro3_2 %>% smooth.spline(df=dof) %>% predict(deriv=1, x=seq(from=1, to=nrow(d), by=0.1)) %>% .$y
+
+plot(d$giro3_1, type="l", lty=2)
+lines(giro.dtw1, type="l")
+# lines(x=seq(from=1, to=nrow(d), by=0.1), giro.dtw1.d1, col="blue")
+# abline(h=0)
+
+plot(giro.dtw1.d1-giro.dtw2.d1, col="blue", type="l")
+```
+
+Smooth moving average:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+Smooth gausiano:
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+#### Multivariate DTW: XY
+
+Podria hacer lo mismo con los pares de coordenadas xy, a la multivariada?
+
+```{r}
+dtw.results <- 
+  sapply(seq.int(1,length(angles2), by = 1), function(i){
+    
+    dtw.result <- 
+      dtw::dtw(x=series2 %>% select(x,y) %>% 
+                 mutate(x = recenter.vector(x, i), y = recenter.vector(y, i)) %>% 
+                 as.matrix(), 
+               y=series1 %>% select(x,y) %>% as.matrix(),
+               dist.method="Manhattan",
+               open.begin = T, 
+               # open.end = T, keep.internals = T,
+               step.pattern = dtw::asymmetric
+               # step.pattern = dtw::asymmetricP0
+               )
+    return(c(i, dtw.result$distance))
+  }) %>% 
+  t() %>% as.data.frame()
+
+dtw.results %>% ggplot() + 
+  geom_point(aes(V1, V2))
+```
+
+
+```{r}
+dtw.lag <- which.min(dtw.results$V2)
+
+dtw.lag
+```
+
+```{r}
+series2.dtw_centered <- 
+  series2 %>% select(x,y,giro3) %>% 
+  mutate(x = recenter.vector(x, dtw.lag), 
+         y = recenter.vector(y, dtw.lag),
+         giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+  mutate(id = 1:n())
+
+series1.dtw_centered <- 
+  series1 %>% select(x,y,giro3) %>% 
+  mutate(id = 1:n())
+
+ggplot(mapping=aes(x=x,y=y,color=id)) +
+  geom_point(data = series2.dtw_centered) + 
+  geom_point(data = series1.dtw_centered, shape=2) +
+  scale_color_viridis_c() + theme_minimal()
+```
+
+```{r}
+dtw.result <- 
+  dtw::dtw(x=series2 %>% select(x,y) %>% 
+             mutate(x = recenter.vector(x, dtw.lag), y = recenter.vector(y, dtw.lag)) %>% 
+             as.matrix(), 
+           y=series1 %>% select(x,y) %>% as.matrix(),
+           dist.method="Manhattan",
+           # open.begin = T, open.end = T, 
+           keep.internals = T,
+           step.pattern = dtw::asymmetric
+           # step.pattern = dtw::asymmetricP0
+           )
+
+d <- 
+  mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                               series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+         dtw.result$index2, 
+         dtw.result$index1) %>% t %>% as.data.frame %>% 
+  mutate(id = 1:n()) %>% 
+  rename(x1=V1, y1=V2, giro3_1=V3,
+         x2=V4, y2=V5, giro3_2=V6)
+
+
+p <- 
+  ggplot(mapping=aes(x=x,y=y,color=id)) +
+    geom_segment(aes(x=x1,y=y1,
+                     xend=x2,yend=y2,
+                     color=id),
+                 data = d,
+                 size=0.2, 
+                 arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in"))) +
+    geom_point(data = series2.dtw_centered, color="black", shape=5) + 
+    geom_point(data = series1.dtw_centered, color="black", shape=2) +
+    # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
+    scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired")) +
+    theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+##### Diferencia entre trazas
+
+1. Graficar secuencia de angulos "warpeada" (alineada) por DTW.
+2. Calcular la diferencia.
+
+```{r}
+plot(d$giro3_1, type="l")
+lines(d$giro3_2, col="red")
+
+plot(d$giro3_1-d$giro3_2, col="blue", type="l")
+```
+
+Es bastante ruidoso.
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% smooth.spline(df=25) %>% .$y
+giro.dtw2 <- d$giro3_2 %>% smooth.spline(df=25) %>% .$y
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = rep(1/5, 5), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+```{r}
+giro.dtw1 <- d$giro3_1 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+giro.dtw2 <- d$giro3_2 %>% stats::filter(filter = dnorm(-3:3,sd = 2), method = "convolution")
+
+plot(giro.dtw1, type="l")
+lines(giro.dtw2, col="red")
+
+plot(giro.dtw1-giro.dtw2, col="blue", type="l")
+```
+
+#### Alignment (pair-wise)
+
+Entre t.frames:
+
+```{r}
+id.cell.one <- "2-772"
+
+cell.idxs <- names(cell.perim.angles.list) %>% str_starts(id.cell.one) %>% which()
+```
+
+```{r}
+cell.angles.one <- 
+  cell.perim.angles.list[cell.idxs] %>% 
+  bind_rows(.id = "id.cell") %>% separate(id.cell, c("pos", "cellID", "t.frame"), convert = T, remove = F) %>% 
+  arrange(pos, cellID, t.frame)
+
+series.list <- cell.angles.one %>% split(~t.frame)
+```
+
+```{r}
+my_dtw <- function(i, angles1, angles2, result=F){
+    dtw.result <- 
+      dtw::dtw(x=angles2 %>% recenter.vector(i), 
+               y=angles1,
+               # open.begin = T, open.end = T, keep.internals = T,
+               # step.pattern = dtw::asymmetricP0
+               step.pattern = dtw::asymmetric
+               )
+    
+    if(result) 
+      return(dtw.result) 
+    else 
+      return(c(i, dtw.result$distance))
+  }
+```
+
+
+```{r}
+# i=1
+series.dtw <- list(series.list[[1]])
+warp.mappings <- list()
+warp.mappings2 <- list()
+warp.mappings3 <- list()
+
+for(i in 1:(length(series.list)-1)){
+  print(i)
+  
+  series1 <- series.dtw[[i]]
+  series2 <- series.list[[i+1]]
+  angles1 <- series1$giro3
+  angles2 <- series2$giro3
+  
+  frame1 <- series1$t.frame[1]
+  frame2 <- series2$t.frame[1]
+  id2 <- series2$id.cell[1]
+  pos <- series2$pos[1]
+  cellID <- series2$cellID[1]
+  
+  # scanning DTW ####
+  dtw.results <- seq.int(1,length(angles2), by = 1) %>% 
+    sapply(my_dtw, angles1, angles2) %>% 
+    t() %>% as.data.frame()
+  
+  dtw.lag <- dtw.results$V1[which.min(dtw.results$V2)]
+  
+  dtw.result <- my_dtw(dtw.lag, angles1, angles2, result=T)
+  
+  # centering by dtw.lag ####
+  series2.dtw_centered <- 
+    series2 %>% select(x,y,giro3,id.cell,pos,t.frame,id) %>% 
+    mutate(x = recenter.vector(x, dtw.lag), 
+           y = recenter.vector(y, dtw.lag),
+           id = recenter.vector(id, dtw.lag),
+           giro3 = recenter.vector(giro3, dtw.lag)) %>% 
+    dplyr::rename(id.old = id) %>% 
+    mutate(id = 1:n())
+  
+  # the previous series should not be recentered (it has been!)
+  series1.dtw_centered <-
+    series1 %>% select(x,y,giro3,id.cell,pos,t.frame,id) %>%
+    dplyr::rename(id.old = id) %>% 
+    mutate(id = 1:n())
+  
+  # Use result in next iteration
+  series.dtw[[i+1]] <- series2.dtw_centered
+  
+  # Warp series
+  warp.mapping <- 
+    mapply(FUN = function(i,j) c(series1.dtw_centered[i,c("x","y","giro3")] %>% unlist %>% unname,
+                                 series2.dtw_centered[j,c("x","y","giro3")] %>% unlist %>% unname),
+           dtw.result$index2, 
+           dtw.result$index1) %>% t %>% as.data.frame %>% 
+    mutate(id = 1:n(),
+           id.cell=id2,
+           pos=pos,cellID=cellID,
+           t.frame.1=frame1,
+           t.frame.2=frame2) %>% 
+    rename(x1=V1, y1=V2, giro3_1=V3,
+           x2=V4, y2=V5, giro3_2=V6)
+  
+  # Para graficar las flechas (formato 1)
+  warp.mappings[[i]] <- warp.mapping
+  
+  # Para graficar las flechas (formato 2)
+  series1.warped <- series1.dtw_centered[dtw.result$index2,]
+  names(series1.warped) <- paste0(names(series1.warped), ".1")
+  series2.warped <- series2.dtw_centered[dtw.result$index1,]
+  names(series2.warped) <- paste0(names(series2.warped), ".2")
+  warp.mappings2[[i]] <- bind_cols(series1.warped,series2.warped)
+  
+  # Para graficar los puntos
+  warp.mappings3[[i]] <- bind_rows(
+    series1.dtw_centered[dtw.result$index2,],
+    series2.dtw_centered[dtw.result$index1,]
+  )
+}
+
+series.dtw <- bind_rows(series.list)
+warp.mappings <- bind_rows(warp.mappings)
+warp.mappings2 <- bind_rows(warp.mappings2)
+warp.mappings3 <- bind_rows(warp.mappings3, .id="series")
+
+warp.mappings2
+warp.mappings3
+```
+
+##### t.frames vs angulos de frontera
+
+```{r}
+magickCell(cdata = cell.data$data %>% filter(pos == 2, cellID == 772),
+           paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
+  square_tile(nRow = 3, 
+              annot_labels = filter(cell.data$data, pos == 2, cellID == 772)$t.frame) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+```{r}
+p2.data1 <- warp.mappings2 %>% filter(t.frame.2 < 18) %>% 
+  group_by(t.frame.1) %>% mutate(giro3.scaled.1 = scale(giro3.1, center = F, scale = T)) %>% ungroup() %>% 
+  group_by(t.frame.2) %>% mutate(giro3.scaled.2 = scale(giro3.2, center = F, scale = T)) %>% ungroup()
+
+p2.data2 <- warp.mappings3 %>% filter(t.frame < 18) %>%
+  select(id,giro3,t.frame) %>% unique() %>% 
+  group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T))
+  
+
+p2 <- p2.data1 %>% 
+#   series.dtw %>%
+#   group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+#   filter(t.frame < 17) %>%
+  
+  ggplot() +
+  # geom_tile(aes(x=id,y=t.frame, fill=giro3)) +
+  geom_segment(aes(x=id.1,   y=t.frame.1, 
+                   #color = giro3.1,
+                   xend=id.2,yend=t.frame.2),
+               color="gray",
+               # data = warp.mappings2 %>% filter(t.frame.2 < 17),
+               # arrow = arrow(type = "opem", angle = 10,
+               #               length = unit(0.1, "in")),
+               size=0.2
+               ) +
+  
+  # geom_point(aes(x=id,y=t.frame,
+  #                color=giro3.scaled,
+  #                size=abs(giro3)), alpha=.5,
+  #                data = series.dtw %>% 
+  #                  group_by(t.frame) %>% 
+  #                  mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+  #                  filter(t.frame < 17)
+  #              ) +
+  
+  # geom_point(aes(id.1,t.frame.1,
+  #                color=giro3.scaled.1,
+  #                size=abs(giro3.1),
+  #                alpha=.5,
+  #                text=paste("id.1:",id.1)),
+  #            data=p2.data1 %>% select(id.1,t.frame.1,giro3.scaled.1,giro3.1,id.old.1) %>% unique()) +
+  # 
+  # geom_point(aes(id.2, t.frame.2,
+  #                color=giro3.scaled.2,
+  #                size=abs(giro3.2),
+  #                alpha=.5,
+  #                text=paste("id.old.2:",id.old.2)),
+  #            data=p2.data1 %>% select(id.2,t.frame.2,giro3.scaled.2,giro3.2,id.old.2) %>% unique()) +
+
+  geom_point(aes(id, t.frame,
+                 color=giro3.scaled,
+                 size=abs(giro3),
+                 alpha=.5
+                 ),
+             data=p2.data2) +
+  
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) +
+  theme_minimal()
+
+# plotly::ggplotly(p2)
+p2
+```
+
+Para chequear:
+
+```{r}
+# warp.mappings2$t.frame.1 %>% unique() -> t.frames
+# 
+# lapply(t.frames, function(t.frame.one){
+#   
+#   series1 <- filter(warp.mappings2, t.frame.1 == t.frame.one)
+#   
+#   p <- ggplot(series1) + 
+#     geom_segment(aes(x=x.1,y=y.1,
+#                      # color=id.1,
+#                      xend=x.2,yend=y.2),
+#                color = "gray",
+#                size=0.2, 
+#                arrow = arrow(type = "closed", angle = 10,
+#                              length = unit(0.1, "in"))) +
+#     geom_point(aes(x.1,y.1,color=giro3.1,text=paste("id.1:",id.1, "\nt.frame.1: ", t.frame.1)),shape=2) +
+#     geom_point(aes(x.2,y.2,color=giro3.2,text=paste("id.2:",id.2, "\nt.frame.2: ", t.frame.2)),shape=17) +
+#     # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired")) +
+#     scale_color_viridis_c() + theme_minimal() +
+#     ggtitle(paste0(t.frame.one,"-",t.frame.one+1))
+#   
+#   plotly::ggplotly(p)
+# 
+# }) -> plts
+# 
+# plts[12]
+```
+
+##### t.frames vs diff(angulos de frontera)
+
+```{r}
+t.frames.few <-  6:17
+```
+
+
+```{r}
+cdata <- cell.data$data %>% filter(pos == 2, cellID == 772, t.frame %in% t.frames.few)
+
+magickCell(cdata = cdata,
+           paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
+  square_tile(nRow = 2, 
+              annot_labels = cdata$t.frame) %>% 
+  magickForKnitr() %>% knitr::include_graphics()
+```
+
+No se como elegir la escala del suavizado.
+
+Quizas mejor no suavizar, que se encarge DWT.
+
+```{r}
+dof <- 25
+
+warp.mappings2.diff <- warp.mappings2 %>% 
+  filter(t.frame.1 %in% t.frames.few,
+         t.frame.2 %in% t.frames.few) %>% 
+  mutate(delta.giro = giro3.2 - giro3.1) %>%   # final-inicial
+  group_by(t.frame.1) %>% 
+  mutate(delta.giro.smooth =
+           smooth.spline(giro3.2, df = dof)$y -
+           smooth.spline(giro3.1, df = dof)$y
+         )  # final-inicial
+
+# warp.mappings2.diff$delta.giro.gmav <- 
+#   warp.mappings2.diff %>% with({
+#     
+#     mav.sd <- 2
+#     mav.filter.width <- 4
+#     
+#     mav.filter <- dnorm(-mav.filter.width:mav.filter.width, sd = mav.sd)
+#     mav.filter[mav.filter.width+1] <- mav.filter[mav.filter.width+1] * 1 
+#     
+#     delta.giro.smooth.gmav <- 
+#        stats::filter(extend.periodic(giro3.2,mav.filter.width),
+#                      filter = mav.filter,
+#                      method = "convolution") -
+#        stats::filter(extend.periodic(giro3.1,mav.filter.width),
+#                      filter = mav.filter,
+#                      method = "convolution")
+#     
+#     delta.giro.smooth.gmav <-
+#       delta.giro.smooth.gmav[seq_along(delta.giro.smooth.gmav) > mav.filter.width]
+#     
+#     delta.giro.smooth.gmav <- 
+#       delta.giro.smooth.gmav[seq_along(delta.giro.smooth.gmav) <= length(delta.giro.smooth.gmav) - mav.filter.width]
+#     
+#     delta.giro.smooth.gmav
+#   })
+
+warp.mappings2.diff %>% 
+  ggplot(aes(x=id.2,y=delta.giro)) +
+  geom_hline(yintercept = 0, size =.1)+
+  geom_line(color="blue",size=.2) +
+  geom_point(color="blue",size=.2) +
+  geom_line(aes(y=delta.giro.smooth), color="red") +
+  facet_wrap(~t.frame.1)
+```
+
+```{r}
+p2.data1 <- warp.mappings2 %>% filter(t.frame.2 < 18) %>% 
+  group_by(t.frame.1) %>% mutate(giro3.scaled.1 = scale(giro3.1, center = F, scale = T)) %>% ungroup() %>% 
+  group_by(t.frame.2) %>% mutate(giro3.scaled.2 = scale(giro3.2, center = F, scale = T)) %>% ungroup()
+
+p2.data2 <- warp.mappings3 %>% filter(t.frame < 18) %>%
+  select(id,giro3,t.frame) %>% unique() %>% 
+  group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T))
+  
+
+p2 <- p2.data1 %>% 
+#   series.dtw %>%
+#   group_by(t.frame) %>% mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+#   filter(t.frame < 17) %>%
+  
+  ggplot() +
+  # geom_tile(aes(x=id,y=t.frame, fill=giro3)) +
+  geom_segment(aes(x=id.1,   y=t.frame.1, 
+                   #color = giro3.1,
+                   xend=id.2,yend=t.frame.2),
+               color="gray",
+               # data = warp.mappings2 %>% filter(t.frame.2 < 17),
+               # arrow = arrow(type = "opem", angle = 10,
+               #               length = unit(0.1, "in")),
+               size=0.2
+               ) +
+  
+  # geom_point(aes(x=id,y=t.frame,
+  #                color=giro3.scaled,
+  #                size=abs(giro3)), alpha=.5,
+  #                data = series.dtw %>% 
+  #                  group_by(t.frame) %>% 
+  #                  mutate(giro3.scaled = scale(giro3, center = F, scale = T)) %>%
+  #                  filter(t.frame < 17)
+  #              ) +
+  
+  # geom_point(aes(id.1,t.frame.1,
+  #                color=giro3.scaled.1,
+  #                size=abs(giro3.1),
+  #                alpha=.5,
+  #                text=paste("id.1:",id.1)),
+  #            data=p2.data1 %>% select(id.1,t.frame.1,giro3.scaled.1,giro3.1,id.old.1) %>% unique()) +
+  # 
+  # geom_point(aes(id.2, t.frame.2,
+  #                color=giro3.scaled.2,
+  #                size=abs(giro3.2),
+  #                alpha=.5,
+  #                text=paste("id.old.2:",id.old.2)),
+  #            data=p2.data1 %>% select(id.2,t.frame.2,giro3.scaled.2,giro3.2,id.old.2) %>% unique()) +
+
+  geom_point(aes(id, t.frame,
+                 color=giro3.scaled,
+                 size=abs(giro3),
+                 alpha=.5
+                 ),
+             data=p2.data2) +
+  
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) +
+  theme_minimal()
+
+# plotly::ggplotly(p2)
+p2
+```
+
+
+
+#### Paths
+
+**PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
+pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
+
+Dibujar el "camino" que recorre un pixel entre tiempos.
+
+Problemas:
+
+* ¿Que pasa en los bordes? Quizas deberia haber corrido el DTW usando una serie de referencia "duplicada".
+  Si no considero esto, va a haber un sesgo en los pixeles del borde, a quedarse en el borde. 
+
+La info de enlace esta en estas variables:
+
+```{r}
+warp.mappings2.unique <- 
+  warp.mappings2 %>% select(id.1,t.frame.1,id.2,t.frame.2) %>% unique()
+```
+
+Elijo un pixel para "rastrear" entre t.frames:
+
+```{r}
+# una flecha cualquiera (por borde)
+# mapping.one <- warp.mappings2.unique %>% sample_n(1)
+
+# un pixel cualquiera (por nodo)
+mapping.one <- warp.mappings2.unique %>%
+  semi_join(warp.mappings2.unique %>% select(id.1, t.frame.1) %>% sample_n(1))
+
+# una flecha especifica (por borde)
+# mapping.one <- warp.mappings2.unique %>%
+#   filter(id.1==56,t.frame.1==3)
+
+mapping.one
+```
+
+Rastrear ese pixel en todos los t.frames:
+
+```{r}
+n.frames <- sum(unique(warp.mappings2.unique$t.frame.2) > mapping.one$t.frame.1[1])
+
+results.list <- list(mapping.one)
+results.list.past <- list(mapping.one)
+
+for(i in 1:n.frames){
+  
+  reference.map <- results.list[[i]]
+  reference.map.past <- results.list.past[[i]]
+  
+  query.map <- warp.mappings2.unique %>% 
+    filter(id.1 %in% reference.map$id.2,
+           t.frame.1 %in% reference.map$t.frame.2)
+  
+  query.map.past <- warp.mappings2.unique %>% 
+    filter(id.2 %in% reference.map.past$id.1,
+           t.frame.2 %in% reference.map.past$t.frame.1)
+  
+  results.list[[i+1]] <- query.map
+  results.list.past[[i+1]] <- query.map.past
+}
+
+results.df <- bind_rows(results.list, .id = "map.idx") %>% 
+  mutate(row.id = 1:n())
+
+results.df.past <- bind_rows(rev(results.list.past[-1]), .id = "map.idx") %>% 
+  {transform(., row.id = {if(nrow(.)==0) integer(0) else 1:nrow(.)} )} # using ifelse failed
+```
+
+Graficar el rastreo:
+
+```{r}
+p <- ggplot() +
+  geom_point(aes(x=id,y=t.frame, 
+                 color=giro3.scaled,
+                 size=abs(giro3)), alpha=.5,
+             data = series.dtw %>% 
+               group_by(t.frame) %>% 
+               mutate(giro3.scaled = scale(giro3, center = F, scale = T))) +
+  scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 3, name = "Set1")) + 
+  
+  geom_segment(aes(x=id.1,   y=t.frame.1,
+                   group = row.id,
+                   xend=id.2,yend=t.frame.2),
+               arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in")),
+               data = results.df,
+               color = "blue"
+               ) +
+  
+    geom_segment(aes(x=id.1,   y=t.frame.1,
+                   group = row.id,
+                   xend=id.2,yend=t.frame.2),
+               arrow = arrow(type = "closed", angle = 10,
+                               length = unit(0.1, "in")),
+               data = results.df.past,
+               color = "red"
+               ) +
+  theme_minimal()
+
+# plotly::ggplotly(p)
+p
+```
+
+##### To-do
+
+**PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
+pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
+
+
+
 
 ### Wavelets?
 
