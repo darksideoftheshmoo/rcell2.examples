@@ -1,6 +1,4 @@
- 
-Descripción de archivos:
-
+# Descripción de archivos
 
 * `curvature_tests.Rmd`: notebook en limpio (WIP).
     * `curvature_tests_old.Rmd`: versión vieja.
