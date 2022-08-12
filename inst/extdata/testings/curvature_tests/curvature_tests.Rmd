@@ -27,7 +27,7 @@ knitr::opts_knit$set(root.dir = here::here())
 library(rcell2)
 library(rcell2.cellid)
 
-devtools::load_all()  # library(rcell2.examples)
+library(rcell2.examples)
 
 library(tidyverse)
 library(magick)
@@ -38,7 +38,8 @@ library(TSclust)
 ## Segmentation
 
 ```{r}
-data.dir <- "data/time_series_sample/"
+data.dir <- system.file("extdata/sample_datasets/time_series_sample", 
+                        package = "rcell2.examples")
 
 parameters.list <- rcell2.cellid::parameters_default(
   background_reject_factor = 0.75,
@@ -47,19 +48,23 @@ parameters.list <- rcell2.cellid::parameters_default(
   max_pixels_per_cell = 3500
 )
 
-cell.args <- arguments(data.dir, parameters = parameters_write(parameters.list))
+cell.args <- arguments(path = data.dir,
+                       parameters = parameters_write(parameters.list))
+
+cell.args
 ```
 
 
 ```{r}
-cell.out <- cell.args %>%
-  cell2(output_coords_to_tsv = T, dry = T)
+cell.out <- cell2(arguments = cell.args,
+                  # dry = T,
+                  output_coords_to_tsv = T)
 ```
 
 ## Load cell data and boundaries
 
 ```{r}
-cell.data <- cell.load.alt(data.dir)
+cell.data <- rcell2.cellid::cell.load.alt(data.dir)
 
 summary(cell.data)
 ```
@@ -285,27 +290,21 @@ cell.angles.sd <-
 
 ## Save calculations
 
+To temporary directory:
+
 ```{r}
 tmp_dir <- tempdir() %>% paste0("/sample_data")
 unlink(tmp_dir, recursive = T)
 dir.create(tmp_dir, showWarnings = F)
 
-saveRDS(cell.data,
-        paste0(tmp_dir, "cell.data.RDS"))
-saveRDS(cell.boundaries,
-        paste0(tmp_dir, "cell.boundaries.RDS"))
-saveRDS(cell.boundaries.list,
-        paste0(tmp_dir, "cell.boundaries.list.RDS"))
-saveRDS(cell.perims.list,
-        paste0(tmp_dir, "cell.perims.list.RDS"))
-saveRDS(cell.perims,
-        paste0(tmp_dir, "cell.perims.RDS"))
-saveRDS(cell.perims.smooth,
-        paste0(tmp_dir, "cell.perims.smooth.RDS"))
-saveRDS(cell.perim.angles,
-        paste0(tmp_dir, "cell.perim.angles.RDS"))
-saveRDS(cell.angles.sd,
-        paste0(tmp_dir, "cell.angles.sd.RDS"))
+saveRDS(cell.data, paste0(tmp_dir, "cell.data.RDS"))
+saveRDS(cell.boundaries, paste0(tmp_dir, "cell.boundaries.RDS"))
+saveRDS(cell.boundaries.list, paste0(tmp_dir, "cell.boundaries.list.RDS"))
+saveRDS(cell.perims.list, paste0(tmp_dir, "cell.perims.list.RDS"))
+saveRDS(cell.perims, paste0(tmp_dir, "cell.perims.RDS"))
+saveRDS(cell.perims.smooth, paste0(tmp_dir, "cell.perims.smooth.RDS"))
+saveRDS(cell.perim.angles, paste0(tmp_dir, "cell.perim.angles.RDS"))
+saveRDS(cell.angles.sd, paste0(tmp_dir, "cell.angles.sd.RDS"))
 ```
 
 ## Finding patterns in angles
