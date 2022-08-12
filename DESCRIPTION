@@ -13,7 +13,7 @@ Authors@R:
       person(given = "Andreas",
            family = "Constantinou",
            role = c("aut"),
-           email = "indie_heights@hotmail.com")
+           email = "indie_heights@hotmail.com"))
 Description: Analyse cellID data in the tidyverse framework. This package also has utility functions to generate, filter and preview data from fluorescence microscopy experiments (and maybe general cell cytometry).
     Included are the tools to process CellID output (from tidyCell). Also, rcell2 interfaces directly with two other packages. The rcell2.cellid package bundles the CellID program source, and wraps it in a single R function. The rcell2.magick package offers R-Shiny apps and magick-based functions to help users preview cell images and filter data graphically.
     This group of packages is meant to succeed the older RCell package.
