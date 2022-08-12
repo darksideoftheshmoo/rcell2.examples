@@ -25,3 +25,18 @@
 #' 
 #' @seealso \link{magick}
 NULL
+
+
+#' list_examples: List example notebooks from rcell2 example notebooks
+#' 
+#' Notebooks with several examples for different kinds of CellID data analyses.
+#' 
+#' Workflow examples are available as Rmd templates in their corresponding packages (rcell2, rcell2.cellid, and rcell2.magkc).
+#'
+#' @export
+#'
+list_examples <- function(){
+  testings.dir <- system.file("extdata/testings", package = "rcell2.examples")
+  
+  dir(testings.dir, pattern = ".*.Rmd")
+}
