@@ -30,3 +30,5 @@ testings/workflow_template/test_parameters_videos/
 /data/time_series_sample/*out.tif
 /data/time_series_sample/Position*/*
 /data/time_series_sample/Position07/bf_rcell2.92107c466979.txt
+*.out.tif
+/data/image_samples_time_series/Position*
