@@ -42,7 +42,7 @@ devtools::install(reload = T, build = T,
 # Load paths
 
 ```{r}
-path <- "data/time_series_image_samples/"
+path <- "data/time_series_sample/"
 path.pdata <- paste0(path, "pdata.csv")
 parameters <- "inst/parameters.txt"
 

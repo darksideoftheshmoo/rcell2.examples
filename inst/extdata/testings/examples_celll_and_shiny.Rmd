@@ -63,7 +63,7 @@ cell(cell.args = cell.args,
 ## Con series temporales
 
 ```{r}
-path <- "../data/time_series_image_samples/"
+path <- "../data/time_series_sample/"
 
 cell.args <- cellArgs(path = path,
                       parameters = parameters,
