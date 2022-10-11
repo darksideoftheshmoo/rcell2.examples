@@ -5,7 +5,6 @@
 *time_of_t0.txt
 .Rd2pdf*/*
 *.directory
-/data/*/*.out.tif
-/data/*/Position*
+/data/*
 /testings/tree_classification/curso_clustering2020_kmeans*
 /testings/noise_tests/noise_test_imgs/*.tif
