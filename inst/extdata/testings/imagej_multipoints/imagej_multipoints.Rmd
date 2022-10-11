@@ -42,6 +42,12 @@ y esa tabla se puede importar en R, y mergear con `cdata`.
 
 Esto es una alternativa al tagueo, y también está `tagCell` hecha con Shiny.
 
+<!-- Usos de este notebook conocidos que podrían tener código actualizado:
+
+* far1/analisis_Far1NG_2019Dai/R/R_Nico_tagueo_wt/02-imagej_multipoints.Rmd
+
+-->
+
 ## Load data
 
 ### Make descriptions for the ImageJ "counters" (tags)
@@ -83,6 +89,23 @@ mp.tags <-
   mutate(pos = as.integer(pos),
          mpid = 1:n())
 ```
+
+Resumir puntos para chequear:
+
+```{r}
+mp.tags %>% group_by(Slice, Counter) %>% 
+  summarise(n=n()) %>% pivot_wider(names_from = Counter, values_from = n)
+
+mp.tags %>% group_by(Slice) %>% 
+  summarise(n=n())
+
+mp.tags %>% group_by(Counter) %>% 
+  summarise(n=n())
+
+mp.tags %>% group_by(X, Y) %>% 
+  summarise(n=n(), Slices = paste(Slice, collapse = ", ")) %>% arrange(-n)
+```
+
 
 Masajear para que queden bien, considrando:
 
