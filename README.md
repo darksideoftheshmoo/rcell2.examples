@@ -26,6 +26,21 @@ However, all example Rmd notebooks use the rcell2 packages, and many other packa
 
 It is left to the user to install them as needed.
 
+# Example image sets
+
+Example image sets can be found at the [inst/extdata/sample_datasets](./inst/extdata/sample_datasets)
+directory.
+
+Once the package has been installed in your system, the path to the images can be found
+by running the following in R's console:
+
+```r
+dir(system.file("extdata/sample_datasets/", package = "rcell2.examples"))
+```
+
+There are simple datasets (single-time) and time-course experiments (with multiple image 
+sets per field of view, taken at different times).
+
 # Development notebooks
 
 Example data and analysis notebooks can be found in the examples package: [`rcell2.examples`](https://github.com/darksideoftheshmoo/rcell2.examples/tree/main).
