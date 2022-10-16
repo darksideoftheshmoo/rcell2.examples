@@ -10,6 +10,8 @@ Cells were stimulated with mating pheromone, which was removed by washing later 
 
 Typical output of the "a tiempo final" experiment, with a single time frame and two positions.
 
+<!-- Time 10 of the experiment. -->
+
 ## [sample_time_series](./sample_time_series)
 
 Time-series images, with two frames and one position, with neatly formatted file names.
