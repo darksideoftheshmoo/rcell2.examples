@@ -1,0 +1,7 @@
+# Cell-ID command:
+
+
+/home/nicomic/R/x86_64-pc-linux-gnu-library/4.2/rcell2.cellid/bin/cell -b /home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/Position4/bf_rcell2-51cc751c40e7a.txt -f /home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/Position4/fl_rcell2-51cc73b9f81a1.txt -o /home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/Position4/out -p /tmp/Rtmp2z7KgK/parameters_516167fe6d3b.txt -t
+
+
+

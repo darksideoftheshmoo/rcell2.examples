@@ -1,0 +1,6 @@
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/TFP_Position12_time10.tif
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/YFP_Position12_time10.tif
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/TFP_Position12_time20.tif
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/YFP_Position12_time20.tif
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/TFP_Position12_time30.tif
+/home/nicomic/R/rcell2.examples/inst/extdata/sample_datasets/sample_full/YFP_Position12_time30.tif
