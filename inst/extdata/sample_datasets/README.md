@@ -15,3 +15,5 @@ Typical output of the "a tiempo final" experiment, with a single time frame and 
 ## [sample_time_series](./sample_time_series)
 
 Time-series images, with two frames and one position, with neatly formatted file names.
+
+This folder was processed by Cell-ID, and contains the full output.
