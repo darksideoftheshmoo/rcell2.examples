@@ -1,3 +1,3 @@
-pos,cepa,feromona,fila_well,columna_well,tiempo
-4,ACL379,8,1,4,26
-12,Y5526,8,3,4,26
+pos,yeast_strain,pheromone_concentration,plate_row,plate_column
+4,ACL379,8,1,4
+12,Y5526,8,3,4
