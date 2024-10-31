@@ -27,6 +27,16 @@ knit: (function(inputFile, encoding) {
 ## Setup
 
 ```{r setup, message=F}
+# Install the "remotes" pacakge if missing
+if(!require("remotes", quietly = T)) install.packages("remotes")
+
+# Install "Cuentitas"
+if(!require("utiles", quietly = T)) remotes::install_gitlab("naikymen-space/science/r_utils")
+
+# Install "rcell2"
+if(!require("rcell2", quietly = T)) remotes::install_github("darksideoftheshmoo/rcell2", )
+
+
 knitr::opts_chunk$set(message = F)
 library(tidyverse)
 library(utiles)
@@ -52,10 +62,19 @@ Copiado de: ~/Projects/PhD/gitlabs_acl/rtcc/far1/20210826-pruebaexpSkotheim1-lav
 ## Load data
 
 ```{r}
-cell.data <- readRDS(
-  "sample_data/cell.data.RDS")
-cell.boundaries <- readRDS(
-  "sample_data/cell.boundaries.RDS")
+data.dir <- system.file("extdata/sample_datasets/sample_time_series", package = "rcell2.examples")
+
+cell.data <- rcell2.cellid::get_cell_data(data.dir)
+cell.args <- rcell2.cellid::arguments(path = data.dir) |> suppressWarnings()
+cell.boundaries <- 
+  rcell2.cellid::get_cell_boundaries(data = cell.args, data_source = "masks.tsv", flags = 0) |> 
+  unite("id.cell", pos, cellID, t.frame, remove = F)
+```
+
+```{r}
+# data.dir <- system.file("extdata/testings/curvature_tests/data/", package = "rcell2.examples")
+# cell.data <- readRDS(file.path(data.dir, "cell.data_20201213_60834cca08e2.RDS"))
+# cell.boundaries <- readRDS(file.path(data.dir, "cell.boundaries_20201214_6083158baea5.RDS"))
 ```
 
 Compute boundary angles:
@@ -72,15 +91,19 @@ ejemplo, entonces los angulos valdrian menos, achatando todo.
 
 ```{r}
 cell.boundaries.list <- split(cell.boundaries, cell.boundaries$id.cell)
+
+cell.boundaries.list[[1]] |> str()
 ```
 
 #### Sample one cell for preview
 
 ```{r}
 boundary.one <- sample(cell.boundaries.list, 1)[[1]]
-id.one <- boundary.one$id.cell[1] %>% as.character.factor()
+id.one <- boundary.one$id.cell[1]
 
-ggplot(boundary.one, aes(x,y)) + 
+if(is.factor(id.one)) id.one <- as.character.factor()
+
+ggplot(boundary.one, aes(x-mean(x),y-mean(y))) + 
   geom_point() + geom_path() + coord_equal() +
   ggtitle(id.one)
 ```
@@ -91,7 +114,9 @@ Smooth them to constant length, up to the 99th percentile of perimeter lengths i
 
 Should help with DTW clustering, or others, requiring same-length series.
 
-##### NOT USED: Choose constant length
+##### Interpolate boundaries to constant length
+
+Interpolate to the longest perimeter, or to the 90th percentile length.
 
 ```{r}
 longest.boundary <- cell.boundaries %>% group_by(pos, cellID, t.frame) %>% 
@@ -116,6 +141,10 @@ boundary.len.90th
 ##### Compute splines with variable length
 
 ```{r}
+# Choose output length.
+length.out <- boundary.len.90th
+length.out <- NULL
+
 # Setup cluster
 no_cores <- parallel::detectCores() - 1
 cl <- parallel::makeCluster(no_cores, outfile = "/tmp/dopar.txt", setup_strategy = "sequential")
@@ -145,8 +174,8 @@ cell.perims.smooth.list <- foreach(cell.boundary.chunk = cell.boundaries.list.ch
       # cell.boundary = cell.boundaries.list[[id.one]]  # TEST
       xy <- cell.boundary[,c("x", "y")]
   
-      xy.spline_nr <- rcell2::smooth.spline.poly(xy = xy, 
-                                                 length.out = boundary.len.90th,
+      xy.spline_nr <- utiles::smooth_spline_poly(xy = xy, 
+                                                 length.out = length.out,
                                                  k = 9, dof = nrow(xy)/3)
   
       xy.spline.poly <- sp::Polygon(xy.spline_nr, hole = FALSE)
@@ -168,21 +197,25 @@ parallel::stopCluster(cl)
 
 ```{r}
 p <- ggplot() +
-  geom_point(aes(x=x, y=y), data = cell.boundaries.list[[id.one]]) +
+  geom_point(aes(x=x, y=y), data = cell.boundaries.list[[id.one]], color="gray") +
   geom_path(aes(x=x, y=y), data = cell.perims.smooth.list[[id.one]]) +
-  coord_equal()
+  coord_equal() + theme_minimal()
 
 p + ggtitle(paste(
   "Points after smoothing:",
   cell.perims.smooth.list[[id.one]] %>% nrow(),
-  "Points before smoothing:",
+  "\nPoints before smoothing:",
   cell.boundaries.list[[id.one]] %>% nrow(),
   "\nTotal number of boundaries processed:",
-  cell.perims.smooth.list %>% length()
+  cell.perims.smooth.list %>% length(),
+  "\nUnique perimeter lengths in dataset:",
+  paste(
+    unique(sapply(cell.perims.smooth.list, nrow)),
+    collapse = ", "
+  )
 ))
-
-unique(sapply(cell.perims.smooth.list, nrow))
 ```
+
 ##### Check ring direction
 
 ```{r}
@@ -211,7 +244,8 @@ bind_rows(.id="curve",
              # linetype=as.factor(curve),
              group=as.factor(curve))) + 
   geom_path() + geom_point(size=.2) +
-  theme_minimal()
+  theme_minimal() +
+  coord_equal()
 ```
 
 ```{r}
@@ -238,7 +272,10 @@ bind_rows(.id="curve",
 
 ```{r}
 # saveRDS(cell.perims.smooth.list, "data/cell.perims.smooth.list.RDS")
-saveRDS(cell.perims.smooth.list, "sample_data/cell.perims.smooth.list.variable_length.RDS")
+
+saveRDS(cell.perims.smooth.list, "/tmp/cell.perims.smooth.list.variable_length.RDS")
+
+# saveRDS(cell.perims.smooth.list, "/tmp/cell.perims.smooth.list.p90th_length.RDS")
 ```
 
 ### Compute angles
@@ -330,38 +367,41 @@ p <- ggplot() +
   geom_path(aes(x=x, y=y), data = cell.boundaries.list[[id.one]]) +
   # geom_path(aes(x=x, y=y), data = cell.perims.smooth.list$`1-0-0`) +
   geom_point(aes(x,y,color=giro3), data = cell.perim.angles.list[[id.one]]) +
-  coord_equal()
-plotly::ggplotly(p)
+  coord_equal() + theme_minimal()
+# plotly::ggplotly(p)
+p
 ```
 
-```{r}
-cell.perim.angles.list[[id.one]] %>% arrange(x,y)
-```
-
+Sum of angles should equal 360, a full-circle.
 
 ```{r}
+# cell.perim.angles.list[[id.one]] %>% arrange(x,y)
+
 cell.perim.angles.list[[id.one]]$giro3 %>% sum()
 ```
 
 ```{r}
-test.id <- "2.114.3"
-  
-cell.perim.angles.list[[test.id]] %>% 
-  ggplot(aes(x=x, y=y, color=giro3)) + 
+# test.id <- cell.perim.angles.list |> names() |> sample(1)
+# test.id <- "6_221_0"
+test.id <- id.one
+
+ggplot(mapping = aes(x=x, y=y, color=giro3)) + 
   geom_path(color="black", data=cell.boundaries.list[[test.id]])+
-  geom_path(size=2) + 
-  scale_color_viridis_c() + coord_equal()
+  geom_path(size=2, data=cell.perim.angles.list[[test.id]]) + 
+  scale_color_viridis_c() +
+  coord_equal() + theme_minimal()
 
 cell.perim.angles.list[[test.id]] %>% 
   ggplot(aes(x=id, y=giro3, color=giro3)) + 
   geom_line(size=2) + 
-  scale_color_viridis_c() + ylim(c(-50,50))
+  scale_color_viridis_c() + 
+  ylim(c(-50,50)) + theme_minimal()
 ```
 
 Random ucid:
 
 ```{r}
-test.id <- sample(names(cell.boundaries.list), 1)
+test.id <- cell.perim.angles.list |> names() |> sample(1)
 
 cell.perim.angles.list[[test.id]] %>% 
   ggplot(aes(x=x, y=y, color=giro3)) + 
@@ -382,7 +422,10 @@ cell.perim.angles.list[[test.id]] %>%
 
 ```{r}
 # cell.perim.angles.list %>% saveRDS("data/cell.perim.angles.list.RDS")
-cell.perim.angles.list %>% saveRDS("sample_data/cell.perim.angles.list.variable_length.RDS")
+
+cell.perim.angles.list %>% saveRDS("/tmp/cell.perim.angles.list.variable_length.RDS")
+
+cell.perim.angles.list %>% saveRDS("/tmp/cell.perim.angles.list.p90th_length.RDS")
 
 # cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.RDS")
 # cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.variable_length.RDS")
@@ -476,7 +519,7 @@ Load results, choose between:
 
 ```{r}
 # cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.RDS")
-cell.perim.angles.list <- readRDS("data/cell.perim.angles.list.variable_length.RDS")
+cell.perim.angles.list <- readRDS("/tmp/cell.perim.angles.list.variable_length.RDS")
 
 cell.perim.angles <- cell.perim.angles.list %>% 
   bind_rows(.id = "id.cell") %>% separate(id.cell, c("pos", "cellID", "t.frame"), convert = T, remove = F) %>% 
@@ -486,29 +529,29 @@ cell.perim.angles <- cell.perim.angles.list %>%
 #### Sample one cell for previews
 
 ```{r}
-cell.boundaries.t5 <- cell.boundaries %>% 
+persistent_cells_at_t <- cell.boundaries %>% 
   select(pos, cellID, t.frame) %>% unique() %>% 
-  group_by(pos, cellID) %>% filter(n() >= 5)
+  group_by(pos, cellID) %>% filter(n() > 1)
 
-cell.boundaries.t <- semi_join(cell.boundaries, cell.boundaries.t5)
+cell.boundaries.t <- semi_join(cell.boundaries, persistent_cells_at_t)
 
-# cell.boundaries.t5 %>% filter(pos == 2, cellID == 133)
+# persistent_cells_at_t %>% filter(pos == 2, cellID == 133)
 # cell.boundaries.t %>% filter(pos == 2, cellID == 133)
 ```
 
 ```{r}
-my.sample <- cell.boundaries.t5[sample(1:nrow(cell.boundaries.t5), 1), c("pos", "cellID")]
+my.sample <- persistent_cells_at_t[sample(1:nrow(persistent_cells_at_t), 1), c("pos", "cellID")]
 
-cell.angles.one <- cell.perim.angles %>% 
-  semi_join(my.sample)
+cell.angles.one <- cell.perim.angles %>% semi_join(my.sample)
 
 id.cell.one <- cell.angles.one[1, c("pos", "cellID")] %>% unlist() %>% paste(collapse = ".")
 ```
 
-
 ```{r}
-cell.angles.one %>% ggplot(aes(x,y,color=giro3)) + geom_path() + facet_wrap(~t.frame, ncol = 10) +
-  coord_equal() + scale_color_viridis_c() +
+cell.angles.one %>% ggplot(aes(x,y,color=giro3)) + 
+  geom_path(size=2) + 
+  facet_wrap(~t.frame, ncol = 10) +
+  coord_equal() + scale_color_viridis_c() + theme_minimal() +
   ggtitle("Boundary v.s. time", id.cell.one)
 
 cell.angles.one %>% group_by(pos, cellID, t.frame) %>% 
@@ -517,7 +560,7 @@ cell.angles.one %>% group_by(pos, cellID, t.frame) %>%
   mutate(angle.norm = angle.base/max(angle.base)) %>% 
   ggplot() +
   geom_tile(aes(x=id,y=as.factor(t.frame), fill=angle.norm)) +
-  scale_fill_viridis_c() + 
+  scale_fill_viridis_c() + theme_minimal() +
   ggtitle("Boundary angle series v.s. time", id.cell.one)
 ```
 
@@ -530,8 +573,9 @@ cellStrip(cdata = cell.data$data %>% semi_join(my.sample),
 ### Data series alignment tests
 
 ```{r}
-t.frame.two <- c(29,30)
+# t.frame.two <- c(29,30)
 # t.frame.two <- 16:17
+t.frame.two <- c(0,2)
 
 series1 <- cell.angles.one %>% filter(t.frame == t.frame.two[1])
 series2 <- cell.angles.one %>% filter(t.frame == t.frame.two[2])
@@ -543,27 +587,36 @@ p <- ggplot(mapping=aes(x=x,y=y,color=id,text=giro3)) +
   geom_point(data = series1) +
   geom_point(data = series2) +
   scale_color_viridis_c()
-plotly::ggplotly(p)
+# plotly::ggplotly(p)
 
 ggplot(mapping=aes(x=x,y=y,color=id)) +
   geom_point(data = series1) + 
   # geom_point(data = series2 %>% mutate(id = recenter.vector(id, 93))) +
   geom_point(data = series2 %>% mutate(id = recenter.vector(id, 125))) +
-  scale_color_viridis_c() + 
+  scale_color_distiller() + coord_equal() + theme_minimal() + scale_y_reverse() +
   ggtitle("Boundary index series of a cell pair", id.cell.one)
 
 ggplot(mapping=aes(x=x,y=y,color=giro3)) +
   geom_point(data = series1) + 
   geom_point(data = series2 %>% mutate(id = recenter.vector(id, 125))) +
-  scale_color_viridis_c() + 
+  scale_color_viridis_c() + coord_equal() + theme_minimal() + scale_y_reverse() +
   ggtitle("Boundary angle series of a cell pair", id.cell.one)
 ```
 
 ```{r}
-plot(series1$giro3,type="l")
-lines(series2$giro3,lty=2)
-# lines(series2$giro3 %>% recenter.vector(125),col="red")
-# lines(series2$giro3 %>% recenter.vector(60),col="blue")
+d <- bind_rows(
+  t0=series1,
+  t2=series2,
+  .id = "series"
+)
+
+ggplot(d, mapping = aes(id,giro3)) +
+  geom_line() +
+  geom_point(aes(color=giro3), size=2) +
+  facet_wrap(~series, ncol = 1) +
+  # scale_color_gradient2() +
+  scale_color_viridis_c() + 
+  theme_minimal()
 ```
 
 #### DTW
@@ -665,21 +718,25 @@ series2.dtw_centered <-
   mutate(x = recenter.vector(x, dtw.lag), 
          y = recenter.vector(y, dtw.lag),
          giro3 = recenter.vector(giro3, dtw.lag)) %>% 
-  mutate(id = 1:n())
+  mutate(id = 1:n()) |> 
+  mutate(x=(x-mean(x))*1.75, y=(y-mean(y))*1.75)
 
 series1.dtw_centered <- 
   series1 %>% select(x,y,giro3,pos,t.frame,cellID) %>% 
-  mutate(id = 1:n())
+  mutate(id = 1:n()) |> 
+  mutate(x=x-mean(x), y=y-mean(y))
 
 ggplot(mapping=aes(x=x,y=y,color=id)) +
   geom_point(data = series2.dtw_centered) + 
   geom_point(data = series1.dtw_centered, shape=2) +
-  scale_color_viridis_c()
+  scale_color_distiller() + theme_minimal() +
+  coord_equal() + scale_y_reverse()
 
 ggplot(mapping=aes(x=x,y=y,color=giro3)) +
   geom_point(data = series2.dtw_centered) + 
   geom_point(data = series1.dtw_centered, shape=2, size =2) +
-  scale_color_viridis_c() + theme_minimal()
+  scale_color_viridis_c() + theme_minimal() +
+  coord_equal() + scale_y_reverse()
 ```
 
 A ver si puedo dibujar flechitas:
@@ -713,18 +770,18 @@ d <-
 
 
 p <- 
-  ggplot(mapping=aes(x=x,y=y,color=id)) +
-    geom_segment(aes(x=x1,y=y1,
+  ggplot(mapping=aes(x=x, y=y, color=id)) +
+    geom_segment(aes(x=x1, y=y1,
                      xend=x2,yend=y2,
                      color=id),
                  data = d,
                  size=0.2, 
-                 arrow = arrow(type = "closed", angle = 10, ends = "both",
+                 arrow = arrow(type = "closed", angle = 10, ends = "last",
                                length = unit(0.1, "in"))) +
     geom_point(aes(shape=as.factor(t.frame)), color="black", size=1, data = bind_rows(series1.dtw_centered, series2.dtw_centered)) + 
     # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
     scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired"), guide = "none") + scale_shape_manual(values = 1:2) +
-    coord_equal() + 
+    coord_equal() + scale_y_reverse() +
     theme_minimal()
 
 # plotly::ggplotly(p)
@@ -865,7 +922,7 @@ series1.dtw_centered <-
 ggplot(mapping=aes(x=x,y=y,color=id)) +
   geom_point(data = series2.dtw_centered) + 
   geom_point(data = series1.dtw_centered, shape=2) +
-  scale_color_viridis_c() + theme_minimal()
+  scale_color_viridis_c() + theme_minimal() + coord_equal() + scale_y_reverse()
 ```
 
 ```{r}
@@ -904,7 +961,7 @@ p <-
     geom_point(data = series1.dtw_centered, color="black", shape=2) +
     # scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Accent")) +
     scale_color_gradientn(colours = RColorBrewer::brewer.pal(n = 12, name = "Paired")) +
-    theme_minimal()
+    theme_minimal() + coord_equal() + scale_y_reverse()
 
 # plotly::ggplotly(p)
 p
@@ -959,9 +1016,10 @@ plot(giro.dtw1-giro.dtw2, col="blue", type="l")
 Entre t.frames:
 
 ```{r}
-id.cell.one <- "2-772"
+id.cell.one <- "4_193"
 
 cell.idxs <- names(cell.perim.angles.list) %>% str_starts(id.cell.one) %>% which()
+cell.idxs
 ```
 
 ```{r}
@@ -1083,11 +1141,12 @@ warp.mappings3
 ###### t.frames vs angulos de frontera
 
 ```{r}
-magickCell(cdata = cell.data$data %>% filter(pos == 2, cellID == 772),
+d.one <- cell.data$data %>% filter(pos == cell.angles.one$pos[1], cellID == cell.angles.one$cellID[1])
+
+magickCell(cdata = d.one,
            paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
-  square_tile(nRow = 3, 
-              annot_labels = filter(cell.data$data, pos == 2, cellID == 772)$t.frame) %>% 
-  magickForKnitr() %>% knitr::include_graphics()
+  square_tile(nRow = 1, annot_labels = d.one$t.frame) %>% 
+  magickForKnitr()
 ```
 
 ```{r}
@@ -1187,18 +1246,16 @@ Para chequear:
 ###### t.frames vs diff(angulos de frontera)
 
 ```{r}
-t.frames.few <-  6:17
+t.frames.few <-  0:2
 ```
 
 
 ```{r}
-cdata <- cell.data$data %>% filter(pos == 2, cellID == 772, t.frame %in% t.frames.few)
-
-magickCell(cdata = cdata,
+magickCell(cdata = d.one,
            paths = cell.data$images, return_single_imgs = T, cell_resize = 150) %>% 
-  square_tile(nRow = 2, 
-              annot_labels = cdata$t.frame) %>% 
-  magickForKnitr() %>% knitr::include_graphics()
+  square_tile(nRow = 1, 
+              annot_labels = d.one$t.frame) %>% 
+  magickForKnitr()
 ```
 
 No se como elegir la escala del suavizado.
@@ -1322,7 +1379,7 @@ p2
 ##### Paths
 
 **PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
-pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
+pero no de la segunda con la primera... tengo qye recalcular todo dandolos vuelta.
 
 Dibujar el "camino" que recorre un pixel entre tiempos.
 
@@ -1330,6 +1387,7 @@ Problemas:
 
 * ¿Que pasa en los bordes? Quizas deberia haber corrido el DTW usando una serie de referencia "duplicada".
   Si no considero esto, va a haber un sesgo en los pixeles del borde, a quedarse en el borde. 
+* DTW no es simétrico: las flechas que arma para A-B no son iguales a las de B-A.
 
 La info de enlace esta en estas variables:
 
@@ -1425,8 +1483,7 @@ p
 ###### To-do
 
 **PROBLEMON**: los paths se cortan porque hice DTW junta todos de la primera con la segunda,
-pero no de la segunda con la primera... tengo qeu recalcular todo dandolos vuelta.
-
+pero no de la segunda con la primera... tengo que recalcular todo dandolos vuelta.
 
 ### Other tests
 
@@ -1441,9 +1498,9 @@ El multiple sequence alignment es un tema tipico de adn/proteinas.
 Ni idea como hacer esto, deberia revisar los algoritmos de alineamiento de secuencias.
 
 ```{r}
-length.diff <- abs(nrow(series1) - nrow(series2))
-
-length.diff
+# length.diff <- abs(nrow(series1) - nrow(series2))
+# 
+# length.diff
 ```
 
 ```{r}
@@ -1460,7 +1517,6 @@ length.diff
 #         angles2[11:60]
 #       ), type="l",col="red")
 ```
-
 
 #### Lagged correlations tests
 
