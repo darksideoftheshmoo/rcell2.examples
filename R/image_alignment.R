@@ -101,6 +101,10 @@ img_alignment_offset <- function(img1, img2){
   cat("Offset X:", offset_x, "Offset Y:", offset_y, "\n")
   
   return(
-    c(offset_x=offset_x,offset_y=offset_y)
+    c(offset_x=offset_x,
+      offset_y=offset_y,
+      max_cor_x = offsets[1],
+      max_cor_y = offsets[2]
+      )
   )
 }
