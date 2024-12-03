@@ -1,31 +1,35 @@
-#' Examples for Yeast Cell Cytometry Suite for CellID in R.
+#' Examples and development scripts for rcell2: Yeast Cell Cytometry Suite for CellID in R
 #'
-#' It is a rewrite and revamp of the previously awesome Rcell package, by Dr. Alan Bush.
-#' Plotting functions from that package have been excluded in the name of minimalism.
-#' Thoughfully, \link{ggplot2} definitions for all those "cplots" are available in our vignettes (happy copy-pasting!).
+#' The full \code{rcell2} functionality is split into three main packages:
+#' rcell2, \code{\link[rcell2.cellid]{rcell2.cellid}}, and \code{\link[rcell2.magick]{rcell2.magick}}.
 #'
-#' The cellMagick package provides three categories of important functions:
-#' cellMagick, tidyCell and shinyCell.
+#' @section rcell2.examples (this package):
+#' Example code for development and miscelaneous image processing and data analysis methods.
+#' Contains some R code and many rmarkdown notebooks with examples and tests.
+#' 
+#' @section rcell2.cellid:
+#' This package includes Cell-ID's source code (written in C). During installation, it compiles a binary executable for Linux, Windows, and Mac systems.
+#' The executable is then wrapped seamlessly by the \code{\link[rcell2.cellid]{cell2}} function, such that Cell-ID can now be used programatically within R.
+#' If you already have Cell-ID in your system, you are welcome to use it instead of the bundled executable.
 #'
-#' @section tidyCell functions:
-#' The tidyCell functions run CellID and/or manage it's output.
-#' Also useful to turn custom data into compatible dataframes for the other functions in this package.
+#' @section rcell2:
+#' rcell2 is a rewrite and revamp of the previous awesome Rcell package, by Dr. Alan Bush.
+#' It loads Cell-IDs output, and is also useful to turn custom data into compatible data frames for the other functions in this package.
+#' Plotting functions from that package have been excluded for the sake of minimalism.
+#' Thoughtfully, \code{\link[ggplot2]{ggplot2}} definitions for all those "cplots" are available in our vignettes (happy copy-pasting!).
 #'
-#' @section cellMagick functions:
-#' Renders images from individual cells, based on original images, user defined filters and data from cells.
-#' It should not be required that the data comes from images processed by CellID.
-#' Requirement of the imagemagick library might bother some, so this awesome feature is optional.
+#' @section rcell2.magick:
+#' Shiny apps and ImageMagick for image manipulation.
+#' \code{\link[rcell2.magick]{magickCell}} renders images from individual cells, based on original images, user defined filters and data from cells.
+#' It should not be required that the data comes from images processed by Cell-ID, it only requires appropriate data frames for observation data (cdata) and for image metadata (paths).
+#' Requirement of the ImageMagick library might be inconvenient, so this awesome feature is optional.
 #'
-#' @section shinyCell functions:
-#' R-Shiny based graphical interface to filter cells by arbitrary variables, and inspect and annotate cells.
-#' It should not be required that the data comes from images processed by CellID.
-#'
-#' @docType package
+#' \code{\link[rcell2.magick]{shinyCell}} is an R-Shiny based graphical interface, meant to filter, inspect and annotate cells relying on 2D plots of arbitrary variables.
+#' It should not be required that the data comes from images processed by Cell-ID, just as \code{\link[rcell2.magick]{magickCell}}.
+#' 
 #' @name rcell2.examples
 #' 
-#' @seealso \link{magick}
-NULL
-
+"_PACKAGE"
 
 #' list_examples: List example notebooks from rcell2 example notebooks
 #' 
