@@ -76,8 +76,6 @@ cross_correlation <- function(img1, img2) {
 img_alignment_offset <- function(img1, img2){
   # Compute cross-correlation
   cross_corr <- cross_correlation(img1, img2)
-  dim(img1)
-  dim(cross_corr)
   
   # Display the result
   # result |> as.cimg() |> plot()
@@ -95,16 +93,21 @@ img_alignment_offset <- function(img1, img2){
   
   f <- function(o, d) if(o > d) {o - d} else {o + d}
   
-  offsets <- max_index[1:2] %% dim(img1)[1:2] - 1
-  offset_x <- offsets[1] - dim(img1)[1] / 2
-  offset_y <- offsets[2] - dim(img1)[2] / 2
+  # Get pixel indexes of maximum cross-correlation.
+  offsets <- max_index[1:2]
+  # Remainder of division (deprecated after zero-centering in cross_correlation).
+  # offsets <- max_index[1:2] %% dim(img1)[1:2] - 1
+  
+  offset_x <- offsets[1] - round(dim(img1)[1]/2)
+  offset_y <- offsets[2] - round(dim(img1)[2]/2)
   cat("Offset X:", offset_x, "Offset Y:", offset_y, "\n")
   
   return(
     c(offset_x=offset_x,
       offset_y=offset_y,
       max_cor_x = offsets[1],
-      max_cor_y = offsets[2]
+      max_cor_y = offsets[2],
+      max_index=max_index[1:2]
       )
   )
 }

@@ -4,13 +4,14 @@ editor_options:
   chunk_output_type: inline
 ---
 
-# Install imager
+# Setup
 
 ```{r setup}
 if(!requireNamespace("imager", quietly = T)) install.packages("imager")
 
 library(imager)
-library(rcell2.examples)
+# library(rcell2.examples)
+devtools::load_all()
 library(tidyverse)
 ```
 
@@ -56,8 +57,8 @@ img2 <- frame2 |> crop_cimg_around_xy(x, y, w) #|> plot()
 
 # Display the cropped images.
 par(mfrow = c(1, 2))
-plot(img1)
-plot(img2)
+plot(img1, main="Reference")
+plot(img2, main="Query")
 ```
 
 ## Test
@@ -66,7 +67,7 @@ plot(img2)
 # Calculate the offset through cross-correlation.
 xy_offsets <- img_alignment_offset(img1, img2)
 
-# Align the uncropped original image.
+# Crop from the original image.
 aligned_image <- crop_cimg_around_xy(frame2, x=x-xy_offsets[1], y=y-xy_offsets[2], w=w)
 
 # Align the cropped image.
@@ -108,7 +109,7 @@ Detailed instructions on how to import these points and map them to cells
 identified by Cell-ID, can be found in the [Cell-tagging using ImageJ] section
 of this notebook.
 
-##### Notas sobre el tagueo
+## Notas sobre el tagueo
 
 1. Taguear celulas CFP en una cepa (6122, delta pho85).
   - Dio razonable. La mejor dosis para cuantificar entre cepas es 1 nM, porque se nota el efecto, y todas las cepas van a estar más a la derecha.
@@ -117,7 +118,9 @@ of this notebook.
   - *Todas* las células CFP en el well F6 (pos 37 y 38) terminaron **muertas**. No vi esto en el resto de las posiciones, pero tampoco lo busqué.
   - Se ve que las células de esas posiciones tienen una dinamica de switching diferente a la de las demas.
 
-##### Tag metadata
+## Load tags
+
+### Tag metadata
 
 ```{r}
 counter_set1 <- bind_rows(
@@ -125,10 +128,10 @@ counter_set1 <- bind_rows(
   data.frame(cell="exp", Counter = 2:3, tag = c("cell", "bud"))
 )
 
-counter_set1
+# counter_set1
 ```
 
-##### Control CFP Strain
+### Control CFP Strain
 
 ```{r}
 tags_dir <- 
@@ -138,14 +141,14 @@ tags_raw_cfp <- dir(tags_dir, pattern = "*.csv", full.names = T) |>
   lapply(read.csv) |> 
   bind_rows() |>
   # filter(Counter %in% 1) |>
-  left_join(counter_set1)
+  left_join(counter_set1,by = join_by(Counter))
 
-tags_raw_cfp |> 
-  ggplot(aes(X, Y, color = as.factor(Counter))) +
-  geom_point() + 
-  facet_wrap(~Slice) +
-  theme_minimal() + 
-  scale_y_reverse()
+# tags_raw_cfp |> 
+#   ggplot(aes(X, Y, color = as.factor(Counter))) +
+#   geom_point() + 
+#   facet_wrap(~Slice) +
+#   theme_minimal() + 
+#   scale_y_reverse()
 ```
 
 ```{r}
@@ -156,27 +159,24 @@ tags_cfp <- tags_raw_cfp |>
   ) |> 
   select(pos, t.frame, cell, tag, X, Y)
 
-tags_cfp
+# tags_cfp
 ```
 
-##### Experiment Strains
+### Experiment Strains
 
 ```{r}
 tags_raw_exp <- file.path(tags_dir, "exp/") |> dir(pattern = "*.csv", full.names = T) |> 
   lapply(read.csv) |> 
   bind_rows() |>
   filter(Counter %in% 2:3) |>
-  left_join(counter_set1)
-```
+  left_join(counter_set1,by = join_by(Counter))
 
-
-```{r}
-tags_raw_exp |> 
-  ggplot(aes(X, Y, color = as.factor(Counter))) +
-  geom_point() + 
-  facet_wrap(~Slice) +
-  theme_minimal() + 
-  scale_y_reverse()
+# tags_raw_exp |> 
+#   ggplot(aes(X, Y, color = as.factor(Counter))) +
+#   geom_point() + 
+#   facet_wrap(~Slice) +
+#   theme_minimal() + 
+#   scale_y_reverse()
 ```
 
 
@@ -191,8 +191,7 @@ tags_exp <- tags_raw_exp |>
 # tags_exp
 ```
 
-#### Combine
-
+### Combine tags
 
 ```{r}
 all_buds <- bind_rows(tags_cfp,tags_exp) |> 
@@ -201,12 +200,19 @@ all_buds <- bind_rows(tags_cfp,tags_exp) |>
 all_buds
 ```
 
+
+# Inspect cells
+
+## Get image paths
+
 ```{r}
 images <- rcell2.cellid::arguments(data.dir) |> 
   rcell2.cellid::arguments_to_images()
 
 images$t.frame |> range()
 ```
+
+## Preview cells
 
 ```{r}
 cdata <- all_buds |> 
@@ -221,4 +227,146 @@ rcell2.magick::magickCell(cdata, images, annotation_params = NULL,
                           ch = "TFP", normalize_images = T, boxSize = 40, cell_resize = 100) |> 
   rcell2.magick::magickForKnitr()
 ```
+
+Reframe cdata to obtain adjacent frames for cell strips:
+
+```{r}
+# Transform each group to an arbitrary number of rows
+cdata_adj <- cdata |> group_by(pos, ucid) |> 
+  # Expand frames around the bud, from the beggining of the experiment.
+  reframe(t.frame = 1:(t.frame+1)) |> 
+  # Keep only valid frames that exist.
+  semi_join(images) |> 
+  # Keep only sequences of sufficient length.
+  group_by(ucid) |> 
+  filter(n() >= 3) |> 
+  # Reinsert the data.
+  left_join(
+    cdata |> rename(t.bud = t.frame)
+  )
+
+cdata_adj |> 
+  ggplot() + geom_tile(aes(t.frame, ucid))
+```
+
+```{r}
+cdata_adj |> 
+  rcell2.magick::cellStrips(images, n_ucids = 5, ch = "TFP",
+                            annotation_params = NULL,
+                            normalize_images = T, boxSize = 40, cell_resize = 100
+                            ) |> 
+  magick::image_join() |> 
+  magick::image_append(stack = T) |> 
+  rcell2.magick::magickForKnitr()
+```
+
+## Align two images
+
+Sample:
+
+```{r}
+d <- cdata_adj |> split(~ucid) |> sample(1) |> first()
+
+t.bud <- d$t.bud[1]
+
+xy <- d |> filter(t.bud == t.frame) |> with(c(xpos, ypos))
+
+i <- images |> semi_join(d) |> 
+  filter(channel == "TFP")
+```
+
+Process:
+
+```{r}
+# Set reference frame.
+t.start <- t.bud
+# Get query frame.
+t.next <- d |> 
+  filter(t.frame != t.start) |> 
+  filter(t.frame == t.frame[ which.min(abs(t.frame - t.start)) ]) |> 
+  with(t.frame)
+# Get image paths.
+path1 <- i |> filter(t.frame == t.start) |> with(file)
+path2 <- i |> filter(t.frame == t.next) |> with(file)
+```
+
+
+```{r}
+# Load two images
+frame1 <- load.image(path1)
+frame2 <- load.image(path2)
+
+# Set crop size.
+w <- 50
+
+# Crop frame1.
+img1 <- frame1 |> crop_cimg_around_xy(xy[1], xy[2], w)
+# Crop frame2.
+img2 <- frame2 |> crop_cimg_around_xy(xy[1], xy[2], w)
+
+# Display the cropped images.
+par(mfrow = c(1, 2))
+plot(img1, main="Reference")
+abline(h=51/2, col="red")
+abline(v=51/2, col="red")
+plot(img2, main="Query")
+abline(h=51/2, col="red")
+abline(v=51/2, col="red")
+```
+
+```{r}
+devtools::load_all()
+```
+
+
+```{r}
+# Calculate the offset through cross-correlation.
+xy_offsets <- img_alignment_offset(img1, img2)
+
+# Crop from the original image.
+aligned_image <- crop_cimg_around_xy(frame2, x=xy[1]-xy_offsets[1], y=xy[2]-xy_offsets[2], w=w)
+```
+
+```{r}
+# Visualize the results
+par(mfrow = c(2, 2))
+cross_correlation(img1, img2) |> plot()
+abline(h=xy_offsets["max_cor_y"], col="red")
+abline(v=xy_offsets["max_cor_x"], col="red")
+plot(img1, main = "Image 1")
+abline(h=51/2, col="red")
+abline(v=51/2, col="red")
+plot(img2, main = "Image 2")
+abline(h=51/2, col="red")
+abline(v=51/2, col="red")
+plot(aligned_image, main = "Image 2 (Aligned)")
+abline(h=51/2, col="red")
+abline(v=51/2, col="red")
+```
+
+
+```{r}
+m <- cross_correlation(img1, img2) |>
+  as.matrix()
+
+m_df <- m |> t() |> 
+  utiles::matrix_to_df()
+
+m_df |> 
+  ggplot(aes(x,y)) +
+  geom_tile(aes(fill=pix_value)) +
+  geom_tile(fill="red", data=m_df |> filter(pix_value == max(pix_value))) +
+  geom_hline(yintercept=xy_offsets["max_cor_y"], alpha = .5, color="red") +
+  geom_vline(xintercept=xy_offsets["max_cor_x"], alpha = .5, color="red") +
+  geom_hline(yintercept=round(51/2), alpha = .5, linetype=2) +
+  geom_vline(xintercept=round(51/2), alpha = .5, linetype=2) +
+  coord_equal() +
+  theme_minimal()
+```
+
+
+
+
+
+
 
