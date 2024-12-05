@@ -1,0 +1,268 @@
+---
+title: "Celll-ID in Python"
+---
+
+# Prompt
+
+> Link: <https://chatgpt.com/share/67520b29-3e24-800f-b7cd-294c746b7548>
+
+From: <https://static-content.springer.com/esm/art%3A10.1038%2Fnmeth1008/MediaObjects/41592_2007_BFnmeth1008_MOESM5_ESM.pdf>
+
+To identify the greyscale value that corresponded to the boundary
+pixels, Cell-ID produced a histogram of the greyscale values for every pixel in the image
+(Supplementary Figure 1a); thus, for a 512x512 image, it produced a histogram with
+more than 250,000 values. Even for images with many cells, the histogram showed a
+narrow peak (indicated by the high peak region in the log-scale plot of Supplementary
+Figure 1a) and a low-end tail. The low-end tail contained the darkest pixels, which
+included the cell boundaries. Cell-ID defined boundary pixels to be those below a user-
+defined threshold. In these experiments, we typically chose the threshold to be the mean
+of the distribution less 1.5 standard deviations (σ)
+
+The next step in locating the cells was to find sets of contiguous bright pixels
+surrounded by these dark boundary pixels. Cell-ID did this by creating sets of contiguous
+pixels whose values were above the threshold. The boundary pixels between these sets
+thus corresponded to the boundary pixels of the cells. Cell-ID generally found one or two
+very large sets (100,000 or more pixels), which were the pixels from the background of
+the visual field. Yeast cells in the image showed up as smaller sets of contiguous pixels,
+on the order of 100 to 1000 pixels.
+
+For each set of contiguous pixels whose size fell within these ranges, Cell-ID found the boundary
+region of the set, and all the pixels inside that boundary were labelled as a cell.
+
+```{r}
+library(reticulate)
+reticulate::py_install(packages = c("tifffile"))
+```
+
+```{python}
+import os
+# path = "/tmp/cells/cell-1-time-4-bud-4.tiff"
+path = os.path.expanduser("~/R/rcell2.examples/inst/extdata/testings/image_alignment/CFP_w2LED-BF--YFPcube--cam_s1_t27.TIF")
+```
+
+```{python}
+import tifffile
+
+def get_tiff_bit_depth(image_path):
+    try:
+        # Open the TIFF file using tifffile
+        with tifffile.TiffFile(image_path) as tif:
+            # Get the first image page's dtype (data type)
+            image = tif.pages[0]
+            # dtype will give us the bit depth indirectly (e.g., np.uint8, np.uint16)
+            dtype = image.dtype
+            # Extract the bit depth from dtype
+            bit_depth = np.dtype(dtype).itemsize * 8
+            return bit_depth
+    except Exception as e:
+        print(f"Error reading TIFF file: {e}")
+        return None
+
+get_tiff_bit_depth(path)
+```
+
+```{python}
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+```
+
+```{python}
+def plot_band_pass_mask(band_pass_mask):
+    """
+    Plot the band-pass filter mask created for the image.
+
+    Parameters:
+        band_pass_mask (numpy.ndarray): The band-pass filter mask to plot.
+    """
+    plt.figure(figsize=(6, 6))
+    plt.imshow(band_pass_mask, cmap='gray', interpolation='none')
+    plt.title("Band-Pass Filter Mask")
+    plt.colorbar()
+    plt.show()
+
+def band_pass_filter_imagej(image, filter_large=80, filter_small=2):
+    """
+    Apply a band-pass filter to the input image to enhance contrast and sharpen edges, based on ImageJ's Bandpass Filter parameters.
+    
+    Parameters:
+        image (numpy.ndarray): The input grayscale image.
+        filter_large (int): The larger frequency cutoff for the high-pass filter (in pixels).
+        filter_small (int): The smaller frequency cutoff for the low-pass filter (in pixels).
+    
+    Returns:
+        numpy.ndarray: The band-pass filtered image.
+    """
+    # Perform Fourier Transform to get the frequency domain representation
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f)
+
+    # Get the shape of the image
+    rows, cols = image.shape
+    crow, ccol = rows // 2, cols // 2
+
+    # Create a mask for the band-pass filter (low-pass + high-pass)
+    # band_pass_mask: This is an image (or mask) of the same size as the input image, initialized to ones (i.e., every pixel starts as "active" in the mask).
+    # dtype=np.float32: The mask is created with a floating-point type, which allows us to apply continuous values (like 0 or 1) in the frequency domain.
+    # rows and cols: These represent the dimensions of the input image, and the mask will have the same shape.
+    band_pass_mask = np.zeros((rows, cols), dtype=np.float32)
+
+    # Make masks.
+    # cv2.circle: Here, another circle is drawn on the same mask, but this time for the high-pass filter.
+    # filter_small: This is the radius of the circle that defines the cutoff frequency for the high-pass filter. This circle will preserve frequencies outside it (set to 1), and remove frequencies inside it (set to 0).
+    # 1: This value sets the color outside the circle (1 represents preserved high frequencies).
+    # -1: This argument specifies that the circle should be filled (i.e., all pixels inside the circle are set to 1).
+    # Preserve high frequencies below this value.
+    cv2.circle(band_pass_mask, (ccol, crow), filter_large, 1, -1)
+    # Remove low frequencies below this value.
+    cv2.circle(band_pass_mask, (ccol, crow), filter_small, 0, -1)
+    # Preserve the center.
+    cv2.circle(band_pass_mask, (ccol, crow), 1, 1, -1)
+
+      
+    # Draw the mask.
+    print(np.unique(band_pass_mask))
+    plot_band_pass_mask(band_pass_mask)
+
+    # Apply the band-pass filter in the frequency domain
+    fshift_filtered = fshift * band_pass_mask
+
+    # Inverse Fourier Transform to get the filtered image back to spatial domain
+    f_ishift = np.fft.ifftshift(fshift_filtered)
+    filtered_image = np.fft.ifft2(f_ishift)
+    filtered_image = np.abs(filtered_image)  # Take the magnitude of the complex result
+
+    # Normalize the filtered image to the range [0, 255]
+    filtered_image = np.uint8(cv2.normalize(filtered_image, None, 0, 255, cv2.NORM_MINMAX))
+
+    return filtered_image
+
+```
+
+
+```{python}
+def segment_cells(image_path, size_range=(100, 1000), sd_threshold=1.5, filter_img=True, filter_large=80, filter_small=2):
+    # Load the grayscale image
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise FileNotFoundError("Image not found or unable to load.")
+      
+    if filter_img:
+      # Apply the band-pass filter to enhance contrast and sharpen edges
+      image = band_pass_filter_imagej(image, filter_large=filter_large, filter_small=filter_small)
+
+    # Calculate threshold: mean - 1.5 * std
+    mean_intensity = np.mean(image)
+    std_intensity = np.std(image)
+    threshold = mean_intensity - sd_threshold * std_intensity
+    
+    bit_depth = get_tiff_bit_depth(path)
+    max_intensity = 2^bit_depth
+    print(f"Image bit-depth: {bit_depth:.2f}")
+    
+    # Compute the histogram of pixel intensities
+    hist, bin_edges = np.histogram(image.ravel(), bins=256)
+    pixel_values = np.arange(256)
+    
+    # Log scale the histogram for visualization
+    plt.figure()
+    plt.plot(pixel_values, hist, label="Histogram")
+    # Plot histogram with vertical line for the threshold
+    plt.axvline(threshold, color='red', linestyle='--', label=f"Threshold ({threshold:.2f})")
+    plt.yscale('log')
+    plt.xlabel("Pixel Intensity")
+    
+    plt.ylabel("Count (log scale)")
+    plt.title("Grayscale Histogram (Log Scale)")
+    plt.legend()
+    plt.show()
+    
+    print(f"Threshold for boundary detection: {threshold:.2f}")
+    
+    # Threshold the image
+    _, boundary_mask = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY_INV)
+    boundary_mask = boundary_mask.astype(np.uint8)
+
+    # Find connected components of bright pixels
+    _, markers = cv2.connectedComponents(255 - boundary_mask)  # invert mask for bright regions
+
+    # Filter components by size and retain cell-like regions
+    cell_mask = np.zeros_like(image, dtype=np.uint8)
+    for marker_id in range(1, markers.max() + 1):
+        component = (markers == marker_id).astype(np.uint8)
+        component_size = np.sum(component)
+        if size_range[0] <= component_size <= size_range[1]:
+            cell_mask = cv2.bitwise_or(cell_mask, component)
+
+    # Extract boundaries of the detected cells
+    contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Create an output image with cell regions and boundaries
+    output = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    for contour in contours:
+        cv2.drawContours(output, [contour], -1, (0, 255, 0), 1)  # Draw boundaries in green
+
+    # Display results
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.title("Original Image")
+    plt.imshow(image, cmap='gray')
+    plt.axis('off')
+    
+    plt.subplot(1, 2, 2)
+    plt.title("Detected Cells")
+    plt.imshow(output)
+    plt.axis('off')
+    plt.show()
+
+    return cell_mask, contours, output, image
+```
+
+```{python}
+cell_mask, contours, output, image = segment_cells(path, sd_threshold=0, filter_large=200, filter_small=5)
+
+# Normalize the output image (convert to 8-bit range)
+output = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+output_normalized = cv2.normalize(output, None, 0, 255, cv2.NORM_MINMAX)
+# Create an output image with cell regions and boundaries
+for contour in contours:
+    _ = cv2.drawContours(output_normalized, [contour], -1, (0, 255, 0), 1)  # Draw boundaries in green
+# Save the normalized output image to a file
+cv2.imwrite("/tmp/output.png", output_normalized)
+```
+
+
+```{python}
+def pixel_size_to_frequency(image_shape, size_in_pixels):
+    """
+    Converts the spatial size in pixels to a frequency in the Fourier domain.
+    
+    Args:
+    - image_shape (tuple): The shape of the image (height, width).
+    - size_in_pixels (int or float): The size of the object in pixels to convert to frequency.
+    
+    Returns:
+    - frequency (float): The corresponding frequency in cycles per pixel.
+    """
+    height, width = image_shape
+
+    # The frequency domain ranges from -0.5 to 0.5 cycles per pixel for each axis
+    # We calculate the cutoff frequency based on the object size (in pixels).
+    # Smaller objects (in pixels) correspond to higher frequencies (in cycles per pixel)
+    
+    # Frequency is inversely proportional to size
+    frequency = 1.0 / size_in_pixels
+    
+    # Ensure the frequency is within the valid range
+    # The Nyquist frequency is 0.5 cycles per pixel, corresponding to a pixel size of 2 pixels
+    if frequency > 0.5:
+        frequency = 0.5  # Prevent frequencies larger than Nyquist
+    elif frequency < 1.0 / max(height, width):
+        frequency = 1.0 / max(height, width)  # Prevent frequencies smaller than the smallest resolvable feature
+    
+    return frequency
+
+# Example image shape (e.g., 512x512 pixels)
+# pixel_size_to_frequency((630, 436), 80)
+```
+
