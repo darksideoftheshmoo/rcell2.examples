@@ -5,12 +5,16 @@ crop_cimg_around_xy <- function(img, x, y, w=50){
   # Define cropping coordinates
   x_min <- x - w/2 |> round()
   x_max <- x + w/2 |> round()
+  
   y_min <- y - w/2 |> round()
   y_max <- y + w/2 |> round()
   
-  # Crop the image
-  cropped_img <- img[y_min:y_max, x_min:x_max,, ] |> as.cimg()
-  # cropped_img <- img[x_min:x_max, y_min:y_max,, ] |> as.cimg()
+  # Crop the image.
+  # cropped_img <- img[y_min:y_max, x_min:x_max,, ] |> as.cimg()
+  
+  # Crop the image in the WRONG WAY.
+  # Who knows why this makes it work with the other nasty hack.
+  cropped_img <- img[x_min:x_max, y_min:y_max,, ] |> as.cimg()
   
   return(cropped_img)
 }
@@ -359,8 +363,6 @@ adjust_offset <- function(img_paths, xy, t.subject, t.query, w=100, s=250, s2=0.
   xy_offsets <- offsets[c("offset_x", "offset_y")]
   return(xy_offsets)
 }
-
-# adjust_offset(img_paths, 13, 12)
 
 #' propagate_offsets
 #' @export

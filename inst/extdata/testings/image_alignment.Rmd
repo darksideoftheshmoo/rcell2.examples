@@ -10,8 +10,8 @@ editor_options:
 if(!requireNamespace("imager", quietly = T)) install.packages("imager")
 
 library(imager)
-# library(rcell2.examples)
-devtools::load_all()
+library(rcell2.examples)
+# devtools::load_all()
 library(tidyverse)
 ```
 
@@ -256,9 +256,9 @@ cdata <- all_buds |>
 ## Preview cells
 
 ```{r}
-rcell2.magick::magickCell(cdata, images, annotation_params = NULL,
-                          ch = "TFP", normalize_images = T, boxSize = 40, cell_resize = 100) |> 
-  rcell2.magick::magickForKnitr()
+# rcell2.magick::magickCell(cdata, images, annotation_params = NULL,
+#                           ch = "TFP", normalize_images = T, boxSize = 40, cell_resize = 100) |> 
+#   rcell2.magick::magickForKnitr()
 ```
 
 ## Reframe cdata
@@ -284,21 +284,21 @@ cdata_adj <- cdata |> group_by(pos, ucid) |>
   # Remove cells with no frame after the bud.
   filter(t.bud < max(images$t.frame))
 
-cdata_adj |> 
-  ggplot() + geom_tile(aes(t.frame, ucid))
+# cdata_adj |> 
+#   ggplot() + geom_tile(aes(t.frame, ucid))
 ```
 
 Check images:
 
 ```{r}
-cdata_adj |> 
-  rcell2.magick::cellStrips(images, n_ucids = 5, ch = "TFP",
-                            annotation_params = NULL,
-                            normalize_images = T, boxSize = 40, cell_resize = 100
-                            ) |> 
-  magick::image_join() |> 
-  magick::image_append(stack = T) |> 
-  rcell2.magick::magickForKnitr()
+# cdata_adj |> 
+#   rcell2.magick::cellStrips(images, n_ucids = 5, ch = "TFP",
+#                             annotation_params = NULL,
+#                             normalize_images = T, boxSize = 40, cell_resize = 100
+#                             ) |> 
+#   magick::image_join() |> 
+#   magick::image_append(stack = T) |> 
+#   rcell2.magick::magickForKnitr()
 ```
 
 # Cell alignment
@@ -641,10 +641,8 @@ img_offsets <- bind_rows(img_paths_pre,
   select(pos, t.frame, 
          x_offset, y_offset, 
          x_offset_sum, y_offset_sum, t.ref)
-
-img_offsets
+# img_offsets
 ```
-
 
 Mitigate "the BUG" here:
 
