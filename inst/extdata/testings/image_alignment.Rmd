@@ -765,11 +765,153 @@ r <- d_list |>
   })
 ```
 
-
 ```{r}
-cdata_adj |> 
-  filter(t.frame == t.bud) |> 
-  select(ucid, t.frame) |> 
-  write.csv(file = "/tmp/cells.csv")
+r[[1]] |> magick::image_info()
 ```
 
+
+```{r}
+failed_cells <- c(37,91,95,104,147,148,151,229,232,235,261,290,342,481,665,666,674,688,689)
+
+cdata_adj |> 
+  filter(t.frame == t.bud) |> 
+  filter(!ucid %in% failed_cells) |> 
+  select(ucid, t.frame) |> 
+  mutate(x=w/2, y=w/2) |> 
+  write.csv(file = "/tmp/cells_batch2.csv")
+```
+
+# Extras
+
+## Drift problem
+
+Conversation: <https://chatgpt.com/share/674f5516-bb78-800f-9038-e00152429327>
+
+**Prompt**:
+
+    I have a series of images over time, and would like to align the frames, that drift slightly in X and Y. I have tried to do cross-correlation as we already discussed, but i keep finding that the alignment "drifts" over frames. That is, if I find the relative offsets between adjacent frames, and then add them up to align the first image to the last, I find that an error accumulates, making the first image terribly unaligned to the last.
+
+**Response**:
+    
+The "drift" problem you describe is common in iterative alignment techniques. This issue arises because small errors in estimating the alignment between consecutive frames accumulate over time, leading to significant misalignment between the first and last images. Here are some potential approaches to address this problem:
+1. Use a Fixed Reference Frame
+
+Instead of aligning each frame to its adjacent frame, align all frames directly to a single reference frame (e.g., the first frame or an average frame). This avoids error accumulation over time.
+Steps:
+
+    Compute the cross-correlation of each frame with the reference frame.
+    Extract the offsets for each frame relative to the reference frame.
+    Apply the offsets to align all frames to the reference frame.
+
+2. Iterative Refinement with Global Optimization
+
+You can reduce drift by globally optimizing the alignment across all frames. This can be achieved using techniques like:
+
+    Mean Frame Alignment: Compute a "mean" frame by averaging all the frames (unaligned), then iteratively align each frame to this mean frame, updating the mean after each iteration until convergence.
+    Circular Consistency Check: After aligning frames, compare the first and last frames. Adjust the offsets to ensure they align properly, distributing the error evenly across all frames.
+
+3. Weighted Cross-Correlation
+
+To avoid over-weighting noisy regions far from the point of interest, you can apply a Gaussian weighting centered on the expected alignment point. This makes the alignment less sensitive to peripheral features.
+4. Rigid Registration
+
+If your images contain objects with small shape variations, consider using a rigid registration technique:
+
+    Use libraries such as SimpleITK in R (via Python integration if necessary).
+    Align frames by optimizing transformations (translation, rotation, scaling).
+
+5. Feature-Based Alignment
+
+Rather than relying on cross-correlation, extract features (e.g., corners, edges) and match them between frames:
+
+    Use packages like EBImage or integrate with Python libraries like OpenCV.
+    Compute transformations (e.g., translation) to align features between frames.
+
+6. Incorporate Drift Correction
+
+A cumulative drift model can account for systematic drift:
+
+    Estimate the drift vector across all frames using methods like least squares.
+    Subtract the cumulative drift from each frame's offset.
+
+7. Nonlinear Drift Models
+
+If the drift is not linear, model it as a smooth curve:
+
+    Use polynomial regression or spline fitting to model the drift across time.
+    Correct offsets using the modeled drift.
+
+## Optical flow
+
+```{r}
+library(reticulate)
+```
+
+```{r}
+# reticulate::py_install(packages = c("numpy", "opencv-python", "matplotlib"))
+# virtualenv_install("r-reticulate", packages = c("numpy", "opencv-python", "matplotlib"))
+```
+
+```{python}
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+```
+
+```{python}
+path1 = "/tmp/cells/cell-1-time-4-bud-4.tiff"
+path2 = "/tmp/cells/cell-1-time-5-bud-4.tiff"
+# Load two consecutive frames as grayscale images
+frame1 = cv2.imread(path1, cv2.IMREAD_GRAYSCALE)
+frame2 = cv2.imread(path2, cv2.IMREAD_GRAYSCALE)
+```
+
+```{r}
+c(py$path1, py$path2) |> 
+  magick::image_read()
+  # magick::image_append() |> 
+  # rcell2.magick::magickForKnitr(.resize = 500)
+```
+
+```{python}
+# Preprocessing step 1: Apply Gaussian Blur to reduce noise
+frame1 = cv2.GaussianBlur(frame1, (5, 5), 0)
+frame2 = cv2.GaussianBlur(frame2, (5, 5), 0)
+
+# Preprocessing step 2: Equalize histogram to enhance contrast
+# frame1 = cv2.equalizeHist(frame1)
+# frame2 = cv2.equalizeHist(frame2)
+```
+
+
+> Smaller images require smaller analysis windows and fewer pyramid levels because there’s less spatial information to process.
+
+```{python}
+# Ensure frames are the same size
+if frame1.shape != frame2.shape:
+    raise ValueError("Frames must have the same dimensions")
+
+# Compute dense optical flow using Farneback method
+flow = cv2.calcOpticalFlowFarneback(
+    frame1, frame2, None, 
+    pyr_scale=0.5, levels=2, winsize=9, 
+    iterations=4, poly_n=3, poly_sigma=1.1, flags=0
+)
+```
+
+
+```{python}
+# Visualize flow vectors
+h, w = frame1.shape
+g = 3
+y, x = np.mgrid[0:h:g, 0:w:g].astype(np.int32)  # Grid for sampling
+fx, fy = flow[y, x].T
+
+# Overlay flow vectors on the first frame
+plt.figure(figsize=(10, 10))
+plt.imshow(frame1, cmap='gray')
+scale_factor = 2  # Adjust this factor to amplify the vectors
+plt.quiver(x, y, fx * scale_factor, fy * scale_factor, color='red', angles='xy', scale_units='xy', scale=1)
+plt.title("Optical Flow Vectors")
+plt.show()
+```
