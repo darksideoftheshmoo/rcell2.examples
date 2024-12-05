@@ -10,8 +10,7 @@ editor_options:
 if(!requireNamespace("imager", quietly = T)) install.packages("imager")
 
 library(imager)
-library(rcell2.examples)
-# devtools::load_all()
+library(rcell2.examples) # devtools::load_all()
 library(tidyverse)
 ```
 
@@ -40,7 +39,10 @@ Functions defined in this package:
 ```{r}
 data.dir <-
   "~/Projects/PhD/gitlabs_acl/rtcc/kar4/2024-08-22-RtCC-Ali-5-cepas-y-CFP/data/2024-08-22-RtCC-Ali-5-cepas-y-CFP/renamed/"
+```
 
+
+```{r}
 # Load two images
 frame1 <- file.path(data.dir, "BF_Position01_time02.tif") |> load.image()
 frame2 <- file.path(data.dir, "BF_Position01_time04.tif") |> load.image()
@@ -593,6 +595,7 @@ d_list <- cdata_adj |> split(~ucid)
 d <- d_list[[398]]
 
 t.bud <- d$t.bud[1]
+
 xy <- d |>
   filter(t.frame == t.bud) |>
   with(c(xpos, ypos))
@@ -606,7 +609,7 @@ img_paths <- images |>
 Calculate offsets:
 
 ```{r}
-w <- 52
+w <- 50
 # s <- 250
 # s2 <- 0.75
 
@@ -690,15 +693,7 @@ off_drift_y <- 0
 ```
 
 ```{r}
-out.dir <- file.path("/tmp", "cells")
-dir.create(out.dir, F, T)
-
-d_list <- cdata_adj |> split(~ucid)
-# d_list <- d_list[1:5]
-
-# d <- d_list[[398]]
-r <- d_list |> 
-  lapply(function(d){
+process_one <- function(d){
     t.bud <- d$t.bud[1]
   
     xy <- d |> filter(t.bud == t.frame) |> with(c(xpos, ypos))
@@ -749,6 +744,22 @@ r <- d_list |>
     }
     
     return(pics)
+  }
+```
+
+
+```{r}
+out.dir <- file.path("/tmp", "cells")
+dir.create(out.dir, F, T)
+
+d_list <- cdata_adj |> split(~ucid)
+# d_list <- d_list[1:5]
+
+# d <- d_list[[398]]
+r <- d_list |> 
+  lapply(function(d){
+    tryCatch(process_one(d),
+             error = function(e) cat("Failed to process cell", d$ucid[1], "\n"))
   })
 ```
 
