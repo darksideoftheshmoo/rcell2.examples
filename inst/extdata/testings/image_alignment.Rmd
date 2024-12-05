@@ -653,7 +653,7 @@ Mitigate "the BUG" here:
 # Generate images.
 pics <- d |> 
   # left_join(img_paths_pre) |> filter(!is.na(file)) |> 
-  left_join(img_offsets) |>
+  left_join(img_offsets, by = join_by(pos, t.frame)) |>
   
   # BUG HERE !!!!!
   mutate(xpos = xpos - y_offset_sum) |> # BUG HERE !!!!!
@@ -734,7 +734,9 @@ process_one <- function(d){
       mutate(ypos = ypos - x_offset_sum) |> # BUG HERE !!!!! 
       # BUG HERE !!!!!
       
-      rcell2.magick::magickCell(images, normalize_images = T, return_single_imgs = T, annotation_params = NULL,
+      rcell2.magick::magickCell(images,
+                                normalize_images = TRUE, return_single_imgs = TRUE, 
+                                annotation_params = NULL, add_border = FALSE,
                                 ch = "TFP", boxSize=w, n.cells = nrow(d))
     
     # Write images.    
