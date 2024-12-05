@@ -4,7 +4,7 @@
 \alias{cross_correlation}
 \title{FFT Based Cross Correlation Computations}
 \usage{
-cross_correlation(img1, img2)
+cross_correlation(img1, img2, zero_shift = F, circ_shift = T)
 }
 \description{
 - http://www.learnpiv.org/fft/

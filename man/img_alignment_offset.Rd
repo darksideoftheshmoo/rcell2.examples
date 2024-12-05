@@ -4,7 +4,7 @@
 \alias{img_alignment_offset}
 \title{Compute image alignment offsets from FFT-based cross-correlation}
 \usage{
-img_alignment_offset(img1, img2)
+img_alignment_offset(img1, img2, s = NULL, s2 = NULL, verbose = F)
 }
 \description{
 Compute image alignment offsets from FFT-based cross-correlation

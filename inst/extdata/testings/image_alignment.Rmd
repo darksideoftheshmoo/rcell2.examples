@@ -44,10 +44,13 @@ data.dir <-
 # Load two images
 frame1 <- file.path(data.dir, "BF_Position01_time02.tif") |> load.image()
 frame2 <- file.path(data.dir, "BF_Position01_time04.tif") |> load.image()
+```
 
+
+```{r}
 x <- 495
 y <- 530
-w <- 50
+w <- 51
 
 # Crop frame1.
 img1 <- frame1 |> crop_cimg_around_xy(x, y, w) #|> plot()
@@ -62,6 +65,11 @@ plot(img2, main="Query")
 ```
 
 ## Test
+
+```{r}
+cross_correlation(img1, img2) |> plot()
+```
+
 
 ```{r}
 # Calculate the offset through cross-correlation.
@@ -83,6 +91,29 @@ abline(v=xy_offsets["max_cor_x"], col="red")
 plot(img1, main = "Image 1")
 plot(img2, main = "Image 2")
 plot(aligned_image, main = "Image 2 (Aligned)")
+```
+
+# Test with EBIMage
+
+No existe "computeTranslation", flasheó ChatGPT.
+
+```{r}
+# library(EBImage)
+# 
+# # Load images
+# 
+# # Load two images
+# img1 <- file.path(data.dir, "BF_Position01_time02.tif") |> readImage()
+# img2 <- file.path(data.dir, "BF_Position01_time04.tif") |> readImage()
+# 
+# # Compute translation using normalized cross-correlation
+# translation <- computeTranslation(img1, img2)
+# 
+# # Apply the transformation
+# aligned_img2 <- translate(img2, translation)
+# 
+# # Display the result
+# display(combine(img1, aligned_img2))
 ```
 
 # Tagging cells
@@ -207,12 +238,12 @@ all_buds
 
 ```{r}
 images <- rcell2.cellid::arguments(data.dir) |> 
-  rcell2.cellid::arguments_to_images()
-
-images$t.frame |> range()
+  rcell2.cellid::arguments_to_images() |> 
+  suppressWarnings()
+# images$t.frame |> range()
 ```
 
-## Preview cells
+## Generate cdata
 
 ```{r}
 cdata <- all_buds |> 
@@ -220,34 +251,44 @@ cdata <- all_buds |>
   # mutate(t.frame = min(t.frame + 1, 65)) |> 
   dplyr::rename(xpos=X, ypos=Y) |> 
   mutate(ucid=1:n())
+```
 
-cdata |> nrow()
+## Preview cells
 
+```{r}
 rcell2.magick::magickCell(cdata, images, annotation_params = NULL,
                           ch = "TFP", normalize_images = T, boxSize = 40, cell_resize = 100) |> 
   rcell2.magick::magickForKnitr()
 ```
 
-Reframe cdata to obtain adjacent frames for cell strips:
+## Reframe cdata
+
+Re-frame `cdata` to obtain rows for all frames for cell strips:
 
 ```{r}
 # Transform each group to an arbitrary number of rows
 cdata_adj <- cdata |> group_by(pos, ucid) |> 
-  # Expand frames around the bud, from the beggining of the experiment.
+  # Expand frames around the bud, from the beginning of the experiment.
   reframe(t.frame = 1:(t.frame+1)) |> 
   # Keep only valid frames that exist.
   semi_join(images) |> 
+  # Keep only frames after the first, which has a focus shift.
+  filter(t.frame > 1) |> 
   # Keep only sequences of sufficient length.
   group_by(ucid) |> 
   filter(n() >= 3) |> 
   # Reinsert the data.
   left_join(
     cdata |> rename(t.bud = t.frame)
-  )
+  ) |> 
+  # Remove cells with no frame after the bud.
+  filter(t.bud < max(images$t.frame))
 
 cdata_adj |> 
   ggplot() + geom_tile(aes(t.frame, ucid))
 ```
+
+Check images:
 
 ```{r}
 cdata_adj |> 
@@ -260,18 +301,22 @@ cdata_adj |>
   rcell2.magick::magickForKnitr()
 ```
 
+# Cell alignment
+
 ## Align two images
 
 Sample:
 
 ```{r}
-d <- cdata_adj |> split(~ucid) |> sample(1) |> first()
+d_list <- cdata_adj |> split(~ucid)
+# d <- d_list |> sample(1) |> first()
+d <- d_list[[398]]
 
 t.bud <- d$t.bud[1]
 
 xy <- d |> filter(t.bud == t.frame) |> with(c(xpos, ypos))
 
-i <- images |> semi_join(d) |> 
+img_paths <- images |> semi_join(d) |> 
   filter(channel == "TFP")
 ```
 
@@ -285,88 +330,435 @@ t.next <- d |>
   filter(t.frame != t.start) |> 
   filter(t.frame == t.frame[ which.min(abs(t.frame - t.start)) ]) |> 
   with(t.frame)
-# Get image paths.
-path1 <- i |> filter(t.frame == t.start) |> with(file)
-path2 <- i |> filter(t.frame == t.next) |> with(file)
 ```
 
+```{r}
+t.start <- 40
+t.next <- 32
+```
 
 ```{r}
+# Get image paths.
+path1 <- img_paths |> filter(t.frame == t.start) |> with(file)
+path2 <- img_paths |> filter(t.frame == t.next) |> with(file)
+
 # Load two images
 frame1 <- load.image(path1)
 frame2 <- load.image(path2)
+```
 
-# Set crop size.
-w <- 50
+Some unexpected stuff:
 
+- Amazingly enough, 50 is the only window size that does not "drift" in X and Y by 1.
+- I also have no idea why setting the widow size to odd numbers messes up the correlogram.
+
+```{r}
+# Set crop size, to not 50, and not odd.
+w <- 52
+# Set sigma.
+s <- NULL
+# Set blur sigma.
+s2 <- NULL
+```
+
+```{r}
 # Crop frame1.
 img1 <- frame1 |> crop_cimg_around_xy(xy[1], xy[2], w)
 # Crop frame2.
 img2 <- frame2 |> crop_cimg_around_xy(xy[1], xy[2], w)
 
 # Display the cropped images.
-par(mfrow = c(1, 2))
 plot(img1, main="Reference")
-abline(h=51/2, col="red")
-abline(v=51/2, col="red")
+abline(h=(w+1)/2, col="red")
+abline(v=(w+1)/2, col="red")
 plot(img2, main="Query")
-abline(h=51/2, col="red")
-abline(v=51/2, col="red")
+abline(h=(w+1)/2, col="red")
+abline(v=(w+1)/2, col="red")
 ```
+
+Try smoothing the correlation signal a bit.
 
 ```{r}
-devtools::load_all()
-```
+par(mfrow = c(1, 3))
 
+# Compute cross-correlation
+cross_corr <- cross_correlation(img1, img2)
+# Display the result
+cross_corr |> as.cimg() |> plot(main = "Cross-correlation")
+
+# Display blurred version.
+cross_corr |> imager::isoblur(sigma=0.75) |> plot(main = "Iso-blur")
+
+# Gaussian weights.
+apply_gaussian_weighting(cross_corr[,,1,1], 250) |> as.cimg() |> plot(main = "Gaussian weighing")
+```
 
 ```{r}
 # Calculate the offset through cross-correlation.
-xy_offsets <- img_alignment_offset(img1, img2)
+xy_offsets <- img_alignment_offset(img1, img2, s=s, s2 = s2)
 
+xy_offsets[c("offset_x", "offset_y")] <- xy_offsets[c("offset_x", "offset_y")] - 1
+
+xy_offsets[c("offset_x", "offset_y")]
+```
+
+```{r}
 # Crop from the original image.
 aligned_image <- crop_cimg_around_xy(frame2, x=xy[1]-xy_offsets[1], y=xy[2]-xy_offsets[2], w=w)
 ```
 
 ```{r}
 # Visualize the results
-par(mfrow = c(2, 2))
+# par(mfrow = c(2, 2))
 cross_correlation(img1, img2) |> plot()
+abline(h=(w+1)/2, col="blue")
+abline(v=(w+1)/2, col="blue")
 abline(h=xy_offsets["max_cor_y"], col="red")
 abline(v=xy_offsets["max_cor_x"], col="red")
 plot(img1, main = "Image 1")
-abline(h=51/2, col="red")
-abline(v=51/2, col="red")
+abline(h=(w+1)/2, col="red")
+abline(v=(w+1)/2, col="red")
 plot(img2, main = "Image 2")
-abline(h=51/2, col="red")
-abline(v=51/2, col="red")
+abline(h=(w+1)/2, col="red")
+abline(v=(w+1)/2, col="red")
 plot(aligned_image, main = "Image 2 (Aligned)")
-abline(h=51/2, col="red")
-abline(v=51/2, col="red")
+abline(h=(w+1)/2, col="red")
+abline(v=(w+1)/2, col="red")
 ```
 
+Note that pixel coordinates are not centered on the pixel in the plot below.
 
 ```{r}
-m <- cross_correlation(img1, img2) |>
-  as.matrix()
+m <- cross_correlation(img1, img2)
 
-m_df <- m |> t() |> 
-  utiles::matrix_to_df()
+# m <- m |>
+#   imager::isoblur(sigma=s2) |> 
+#   as.matrix() |> 
+#   apply_gaussian_weighting(s=s)
+
+m_df <- m |> as.matrix() |> 
+  t() |> 
+  utiles::matrix_to_df() |> 
+  arrange(-pix_value)
+
+m_df_max <- m_df |> filter(pix_value == max(pix_value))
 
 m_df |> 
   ggplot(aes(x,y)) +
   geom_tile(aes(fill=pix_value)) +
-  geom_tile(fill="red", data=m_df |> filter(pix_value == max(pix_value))) +
+  geom_tile(fill="yellow", data=m_df_max) +
   geom_hline(yintercept=xy_offsets["max_cor_y"], alpha = .5, color="red") +
   geom_vline(xintercept=xy_offsets["max_cor_x"], alpha = .5, color="red") +
-  geom_hline(yintercept=round(51/2), alpha = .5, linetype=2) +
-  geom_vline(xintercept=round(51/2), alpha = .5, linetype=2) +
-  coord_equal() +
+  geom_hline(yintercept=w/2, alpha = .5, linetype=2) +
+  geom_vline(xintercept=w/2, alpha = .5, linetype=2) +
+  coord_equal() + scale_y_reverse() + 
+  ggtitle(paste("Max correlation at:", unlist(m_df_max)[1], unlist(m_df_max)[2], "(yellow)"), 
+          paste("Final offsets at:", xy_offsets["max_cor_x"], xy_offsets["max_cor_y"], "(red)")) +
   theme_minimal()
 ```
 
+## Methods
+
+```{r}
+?adjust_offset
+?propagate_offsets
+```
+
+## Process a cell
+
+Sample:
+
+```{r}
+d_list <- cdata_adj |> split(~ucid)
+
+d <- d_list[[398]]
+t.bud <- d$t.bud[1]
+
+r <- 2:16
+r <- 2:60
+r <- 2:6
+d <- d_list[[398]] |> 
+  mutate(ypos = ypos + 30) |>
+  filter(t.frame %in% r)
+t.bud <- max(r)  # Reverse
+
+xy <- d |>
+  # filter(t.frame == 2) |> # Reverse
+  filter(t.frame == max(r)) |> # Reverse
+  with(c(xpos, ypos))
+
+img_paths <- images |> 
+  semi_join(d, by = join_by(pos, t.frame)) |> 
+  filter(channel == "TFP") |> 
+  arrange(t.frame)
+
+pics <- d |> 
+  rcell2.magick::magickCell(images, normalize_images = T, return_single_imgs = T, annotation_params = NULL,
+                            n.cells=nrow(d), 
+                            highlight_frames=t.bud,
+                            ch = "TFP", boxSize=50) |> 
+  rcell2.magick::square_tile(nRow = 3) |> 
+  rcell2.magick::magickForKnitr()
+```
+
+Test:
+
+```{r}
+img_offsets <- img_paths |> 
+  arrange(-t.frame) |> # Reverse.
+  
+  # Align.
+  propagate_offsets(t.bud = t.bud, xy = xy, verbose = F) |> 
+  
+  # Compute cumulative offset.  
+  mutate(x_offset_sum = cumsum(x_offset),
+         y_offset_sum = cumsum(y_offset)) |> 
+  select(pos, t.frame, 
+         x_offset, y_offset, 
+         x_offset_sum, y_offset_sum, t.ref)
+
+# img_offsets
+```
+
+### BUG: exchanged offsets
+
+I need to exchange the X and Y offset sums for alignment to work (or at least display) properly.
+
+I have reviewed this extensively and haven't found the issue. whatever works...
+
+```{r}
+d_xy <- d |> 
+  left_join(img_offsets) 
+
+pics <- d_xy |> 
+  
+  # BUG HERE !!!!!
+  mutate(xpos = xpos - y_offset_sum) |> # BUG HERE !!!!!
+  mutate(ypos = ypos - x_offset_sum) |> # BUG HERE !!!!! 
+  # BUG HERE !!!!!
+  
+  rcell2.magick::magickCell(images, normalize_images = T, annotation_params = NULL,
+                            return_single_imgs = T,
+                            n.cells=nrow(d), 
+                            highlight_frames=t.bud,
+                            ch = "TFP", boxSize=50)
+
+# Preview.
+pics |> 
+  rcell2.magick::square_tile(nRow = 2) |>
+  # magick::image_append() |>
+  rcell2.magick::magickForKnitr()
+```
+
+```{r}
+d_xy_img <- d_xy |>  
+  select(pos, t.frame, xpos, ypos) |> 
+  left_join(img_paths) |> 
+  arrange(t.frame) |> 
+  split(~t.frame) |> 
+  lapply(function(d_corr){
+    img <- load.image(d_corr$file)
+    crop_cimg_around_xy(img, x = d_corr$xpos, y = d_corr$ypos, w = w)
+  })
+
+# Create a 2D tile with configurable rows and columns
+tile <- create_image_tile(d_xy_img, n_rows = 5, aspect_ratio = 1)
+plot(tile)
+```
 
 
+```{r}
+d_xy_img <- d_xy |>  
+  mutate(xpos = xpos - y_offset_sum) |>
+  mutate(ypos = ypos - x_offset_sum) |> 
+  select(pos, t.frame, xpos, ypos) |> 
+  left_join(img_paths) |> 
+  arrange(t.frame) |> 
+  split(~t.frame) |> 
+  lapply(function(d_corr){
+    img <- load.image(d_corr$file)
+    crop_cimg_around_xy(img, x = d_corr$xpos, y = d_corr$ypos, w = w)
+  })
+
+# Create a 2D tile with configurable rows and columns
+tile <- create_image_tile(d_xy_img, n_rows = 5, aspect_ratio = 1)
+plot(tile)
+```
+
+### Full time-course test
+
+```{r}
+d_list <- cdata_adj |> split(~ucid)
+
+d <- d_list[[398]]
+
+t.bud <- d$t.bud[1]
+xy <- d |>
+  filter(t.frame == t.bud) |>
+  with(c(xpos, ypos))
+
+img_paths <- images |> 
+  semi_join(d, by = join_by(pos, t.frame)) |> 
+  filter(channel == "TFP") |> 
+  arrange(t.frame)
+```
+
+Calculate offsets:
+
+```{r}
+w <- 52
+# s <- 250
+# s2 <- 0.75
+
+# w <- 25
+s <- NULL
+s2 <- NULL
+
+off_drift_x <- 0 # 1
+off_drift_y <- 0 # 1.5
+```
+
+```{r}
+# After budding.
+img_paths_post <- img_paths |> 
+  filter(t.frame >= t.bud) |> 
+  propagate_offsets(t.bud, xy, w, s, s2, xy_adj=F) |> 
+  mutate(x_offset_sum = cumsum(x_offset-off_drift_x),
+         y_offset_sum = cumsum(y_offset-off_drift_y))
+
+# Before budding.
+img_paths_pre <- img_paths |> 
+  filter(t.frame <= t.bud) |> 
+  arrange(-t.frame) |> 
+  propagate_offsets(t.bud, xy, w, s, s2, xy_adj=F)|> 
+  mutate(x_offset_sum = cumsum(x_offset-off_drift_x),
+         y_offset_sum = cumsum(y_offset-off_drift_y))
+
+# Join results.
+img_offsets <- bind_rows(img_paths_pre, 
+                         img_paths_post[-1,]) |> 
+  arrange(t.frame) |> 
+  select(pos, t.frame, 
+         x_offset, y_offset, 
+         x_offset_sum, y_offset_sum, t.ref)
+
+img_offsets
+```
 
 
+Mitigate "the BUG" here:
 
+```{r}
+# Generate images.
+pics <- d |> 
+  # left_join(img_paths_pre) |> filter(!is.na(file)) |> 
+  left_join(img_offsets) |>
+  
+  # BUG HERE !!!!!
+  mutate(xpos = xpos - y_offset_sum) |> # BUG HERE !!!!!
+  mutate(ypos = ypos - x_offset_sum) |> # BUG HERE !!!!! 
+  # BUG HERE !!!!!
+  
+  rcell2.magick::magickCell(images, normalize_images = T, return_single_imgs = T, annotation_params = NULL,
+                            n.cells=nrow(d),
+                            highlight_frames=t.bud,
+                            ch = "TFP", boxSize=50)
+
+# Preview.
+pics |> 
+  rcell2.magick::square_tile(nRow = 5) |> 
+  # magick::image_append() |> 
+  rcell2.magick::magickForKnitr()
+```
+
+## Process all
+
+```{r}
+w <- 100
+s <- 500
+s2 <- 0.75
+
+off_drift_x <- 1
+off_drift_y <- 1.5
+```
+
+```{r}
+w <- 50
+s <- NULL
+s2 <- NULL
+
+off_drift_x <- 0
+off_drift_y <- 0
+```
+
+```{r}
+out.dir <- file.path("/tmp", "cells")
+dir.create(out.dir, F, T)
+
+d_list <- cdata_adj |> split(~ucid)
+# d_list <- d_list[1:5]
+
+# d <- d_list[[398]]
+r <- d_list |> 
+  lapply(function(d){
+    t.bud <- d$t.bud[1]
+  
+    xy <- d |> filter(t.bud == t.frame) |> with(c(xpos, ypos))
+    
+    img_paths <- images |> 
+      semi_join(d, by = join_by(pos, t.frame)) |> 
+      filter(channel == "TFP") |> 
+      arrange(t.frame)
+    
+    # After budding.
+    img_paths_post <- img_paths |> 
+      filter(t.frame >= t.bud) |> 
+      propagate_offsets(t.bud, xy, w, s, s2) |> 
+      mutate(x_offset_sum = cumsum(x_offset-off_drift_x),
+             y_offset_sum = cumsum(y_offset-off_drift_y))
+    
+    
+    # Before budding.
+    img_paths_pre <- img_paths |> 
+      filter(t.frame <= t.bud) |> 
+      arrange(-t.frame) |> 
+      propagate_offsets(t.bud, xy, w, s, s2)|> 
+      mutate(x_offset_sum = cumsum(x_offset-off_drift_x),
+             y_offset_sum = cumsum(y_offset-off_drift_y))
+    
+    # Join results.
+    img_offsets <- bind_rows(img_paths_pre, 
+                             img_paths_post[-1,]) |> 
+      arrange(t.frame) |> 
+      select(pos, t.frame, x_offset, y_offset, x_offset_sum, y_offset_sum, t.ref)
+    
+    # Make images.
+    pics <- d |> 
+      left_join(img_offsets, by = join_by(pos, t.frame)) |> 
+  
+      # BUG HERE !!!!!
+      mutate(xpos = xpos - y_offset_sum) |> # BUG HERE !!!!!
+      mutate(ypos = ypos - x_offset_sum) |> # BUG HERE !!!!! 
+      # BUG HERE !!!!!
+      
+      rcell2.magick::magickCell(images, normalize_images = T, return_single_imgs = T, annotation_params = NULL,
+                                ch = "TFP", boxSize=w, n.cells = nrow(d))
+    
+    # Write images.    
+    for(j in 1:nrow(d)){
+      p <- file.path(out.dir, paste0("cell-", d$ucid[1], "-time-", d$t.frame[j], "-bud-", t.bud, ".tiff"))
+      magick::image_write(image = pics[j], path = p, format = "tiff")
+    }
+    
+    return(pics)
+  })
+```
+
+
+```{r}
+cdata_adj |> 
+  filter(t.frame == t.bud) |> 
+  select(ucid, t.frame) |> 
+  write.csv(file = "/tmp/cells.csv")
+```
 

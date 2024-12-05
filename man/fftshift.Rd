@@ -2,19 +2,55 @@
 % Please edit documentation in R/image_alignment.R
 \name{fftshift}
 \alias{fftshift}
-\title{A function to shift zero-frequency component to the center of the spectrum.}
+\title{Shift the Zero-Frequency Component to the Center of the Spectrum}
 \usage{
 fftshift(x)
 }
+\arguments{
+\item{x}{A numeric vector, matrix, or multi-dimensional array. The input represents 
+a spectrum or image where the zero-frequency component is to be shifted.}
+}
+\value{
+A numeric array of the same dimensions as the input, with the zero-frequency 
+component shifted to the center. The data ordering is circularly wrapped.
+}
 \description{
-- http://matlab.izmiran.ru/help/techdoc/ref/fftshift.html
-- https://stackoverflow.com/a/49863001
+Reorders the elements of a 1D or multi-dimensional array such that the zero-frequency 
+component is moved to the center of the spectrum. This operation is commonly used in 
+Fourier transform processing to improve visualization and analysis.
 }
 \details{
+The function divides the input into two halves and swaps them to place the zero-frequency 
+component at the center. The shift is computed based on the input length and is effective 
+for 1D data. For multi-dimensional data, the function can be extended or applied separately 
+to each dimension.
+
+Compared to \code{\link{circular_shift}}, which operates on spatial domain images, 
+\code{fftshift} focuses on rearranging frequency domain data for analysis. The key 
+distinction is that \code{fftshift} is explicitly designed for frequency domain applications, 
+whereas \code{circular_shift} applies a spatial circular wrap using Fourier-style boundary 
+conditions.
+
+- http://matlab.izmiran.ru/help/techdoc/ref/fftshift.html
+- https://stackoverflow.com/a/49863001
+
 >  FFTSHIFT shifts the zero-frequency component to the center of the signal.
 > In this case the signal is an image. A good visual guide is this.
 > If you expand the original output image, you will see something akin to this:
 
 Esto fue importante para poder encontrar consistentemente el máximo de la 
 correlacion cruzada cerca del centro si el offset es pequeño.
+}
+\examples{
+# Shift a 1D array
+vec <- 1:8
+fftshift(vec)
+
+# Shift a 2D matrix (row and column shift must be implemented separately)
+mat <- matrix(1:16, nrow = 4, ncol = 4)
+row_shifted <- fftshift(mat[1, ])
+
+}
+\seealso{
+\code{\link{circular_shift}} for spatial domain circular shifting.
 }
