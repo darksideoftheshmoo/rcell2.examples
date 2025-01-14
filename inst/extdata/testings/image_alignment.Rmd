@@ -672,7 +672,9 @@ pics |>
   rcell2.magick::magickForKnitr()
 ```
 
-## Process all
+## Process all cells
+
+### Set parameters
 
 ```{r}
 w <- 100
@@ -691,6 +693,8 @@ s2 <- NULL
 off_drift_x <- 0
 off_drift_y <- 0
 ```
+
+### Function
 
 ```{r}
 process_one <- function(d){
@@ -749,6 +753,7 @@ process_one <- function(d){
   }
 ```
 
+### Process
 
 ```{r}
 out.dir <- file.path("/tmp", "cells")
@@ -769,6 +774,9 @@ r <- d_list |>
 r[[1]] |> magick::image_info()
 ```
 
+### Export Labels
+
+Export labels excluding failed cells.
 
 ```{r}
 failed_cells <- c(37,91,95,104,147,148,151,229,232,235,261,290,342,481,665,666,674,688,689)
