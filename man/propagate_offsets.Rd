@@ -2,7 +2,7 @@
 % Please edit documentation in R/image_alignment.R
 \name{propagate_offsets}
 \alias{propagate_offsets}
-\title{propagate_offsets}
+\title{Propagate Offsets Across Image Frames}
 \usage{
 propagate_offsets(
   img_paths,
@@ -15,6 +15,40 @@ propagate_offsets(
   verbose = F
 )
 }
+\arguments{
+\item{img_paths}{A data frame containing information about the image frames. Must include columns `t.frame` 
+for the time points of the frames. Additional columns `x_offset`, `y_offset`, and `t.ref` will be updated or added.}
+
+\item{t.bud}{Numeric, the initial reference time frame to align all subsequent frames to.}
+
+\item{xy}{Numeric vector of length 2, the initial XY alignment point.}
+
+\item{w}{Numeric, the width of the region used for alignment in the image. Default is 50.}
+
+\item{s}{Optional parameter passed to `adjust_offset` to control the alignment strategy (default is `NULL`).}
+
+\item{s2}{Optional parameter passed to `adjust_offset` for additional alignment control (default is `NULL`).}
+
+\item{xy_adj}{Logical, if `TRUE`, offsets are adjusted relative to the accumulated offset of previous frames. 
+If `FALSE`, all frames are aligned relative to the initial alignment point. Default is `FALSE`.}
+
+\item{verbose}{Logical, if `TRUE`, prints detailed progress and alignment information. Default is `FALSE`.}
+}
+\value{
+A data frame with the same structure as `img_paths`, including updated columns for `x_offset`, `y_offset`, 
+  and `t.ref`, which store the computed offsets and reference time frame for each image.
+}
 \description{
-propagate_offsets
+This function computes and propagates XY offsets across a sequence of image frames, aligning them based on a 
+specified reference frame and an initial alignment point.
+}
+\details{
+- If `xy_adj` is `FALSE`, all frames are aligned relative to the event frame (the `t.bud` time frame) using the 
+  provided `xy` alignment point.
+- If `xy_adj` is `TRUE`, each frame is aligned relative to the accumulated offsets of previous frames. 
+  Note that this mode can sometimes cause instability or drift.
+- The function relies on `adjust_offset`, which performs the actual alignment between frames.
+}
+\seealso{
+[adjust_offset]
 }

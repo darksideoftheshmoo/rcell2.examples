@@ -386,9 +386,37 @@ adjust_offset <- function(img_paths, xy, t.subject, t.query, w=100, s=250, s2=0.
   return(xy_offsets)
 }
 
-#' propagate_offsets
+#' Propagate Offsets Across Image Frames
+#'
+#' This function computes and propagates XY offsets across a sequence of image frames, aligning them based on a 
+#' specified reference frame and an initial alignment point.
+#'
+#' @param img_paths A data frame containing information about the image frames. Must include columns `t.frame` 
+#'   for the time points of the frames. Additional columns `x_offset`, `y_offset`, and `t.ref` will be updated or added.
+#' @param t.bud Numeric, the initial reference time frame to align all subsequent frames to.
+#' @param xy Numeric vector of length 2, the initial XY alignment point.
+#' @param w Numeric, the width of the region used for alignment in the image. Default is 50.
+#' @param s Optional parameter passed to `adjust_offset` to control the alignment strategy (default is `NULL`).
+#' @param s2 Optional parameter passed to `adjust_offset` for additional alignment control (default is `NULL`).
+#' @param xy_adj Logical, if `TRUE`, offsets are adjusted relative to the accumulated offset of previous frames. 
+#'   If `FALSE`, all frames are aligned relative to the initial alignment point. Default is `FALSE`.
+#' @param verbose Logical, if `TRUE`, prints detailed progress and alignment information. Default is `FALSE`.
+#'
+#' @return A data frame with the same structure as `img_paths`, including updated columns for `x_offset`, `y_offset`, 
+#'   and `t.ref`, which store the computed offsets and reference time frame for each image.
+#'
+#' @details
+#' - If `xy_adj` is `FALSE`, all frames are aligned relative to the event frame (the `t.bud` time frame) using the 
+#'   provided `xy` alignment point.
+#' - If `xy_adj` is `TRUE`, each frame is aligned relative to the accumulated offsets of previous frames. 
+#'   Note that this mode can sometimes cause instability or drift.
+#' - The function relies on `adjust_offset`, which performs the actual alignment between frames.
+#'
+#' @seealso [adjust_offset]
 #' @export
 propagate_offsets <- function(img_paths, t.bud, xy, w=50, s=NULL, s2=NULL, xy_adj=F, verbose=F){
+  # Check
+  stopifnot(length(xy) == 2, paste("The 'xy' argument is not a vector of length 2:", xy)) 
   # Initialize.
   img_paths[1, c("x_offset", "y_offset", "t.ref")] <- c(0, 0, t.bud)
   # Early return.
